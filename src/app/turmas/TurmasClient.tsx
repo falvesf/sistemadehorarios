@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { updateCurriculum, deleteClass } from '../actions';
+import { updateCurriculum, deleteClass, updateClass } from '../actions';
 import styles from '../professores/professores.module.css';
 
 type Curriculum = {
@@ -31,12 +31,20 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
   const { showToast } = useToast();
   const [editingTurma, setEditingTurma] = useState<Turma | null>(null);
   
+  // States for Class details
+  const [className, setClassName] = useState('');
+  const [classLevel, setClassLevel] = useState('');
+  const [classShift, setClassShift] = useState('');
+
   // Local state for the curriculum being edited to allow bulk save
   const [localCurriculums, setLocalCurriculums] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleEditClick = (turma: Turma) => {
     setEditingTurma(turma);
+    setClassName(turma.name);
+    setClassLevel(turma.level);
+    setClassShift(turma.shift);
     // clone curriculums for editing
     setLocalCurriculums(turma.curriculums.map(c => ({ ...c })));
   };
@@ -51,16 +59,28 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
   };
 
   const handleSave = async () => {
+    if (!className.trim()) {
+      showToast('O nome da turma não pode ficar vazio.', 'error');
+      return;
+    }
+
     setIsSaving(true);
     try {
+      const classRes = await updateClass(editingTurma!.id, { name: className, level: classLevel, shift: classShift });
+      if (!classRes?.success) {
+         showToast(classRes?.error?.includes('Unique constraint') ? 'Já existe uma turma com esse nome.' : 'Erro ao atualizar turma.', 'error');
+         setIsSaving(false);
+         return; 
+      }
+
       // call updateCurriculum for each changed item sequentially (or Promise.all)
       await Promise.all(
         localCurriculums.map(c => updateCurriculum(c.id, Number(c.classesPerWeek), c.teacherId === '' ? null : c.teacherId))
       );
-      showToast('Grade atualizada com sucesso!', 'success');
+      showToast('Turma e Grade atualizadas com sucesso!', 'success');
       setEditingTurma(null);
     } catch (e) {
-      showToast('Erro ao atualizar a grade curricular.', 'error');
+      showToast('Erro ao atualizar a turma.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -126,12 +146,43 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
         </table>
       </div>
 
-      <Modal isOpen={!!editingTurma} onClose={() => setEditingTurma(null)} title={`Editar Grade - ${editingTurma?.name}`}>
+      <Modal isOpen={!!editingTurma} onClose={() => setEditingTurma(null)} title={`Editar Turma`}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+          <div>
+            <label className="input-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Nome da Turma</label>
+            <input 
+              type="text" 
+              className="input" 
+              value={className} 
+              onChange={e => setClassName(e.target.value)} 
+            />
+          </div>
+          <div>
+            <label className="input-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Nível</label>
+            <select className="input" value={classLevel} onChange={e => setClassLevel(e.target.value)}>
+              <option value="INFANTIL">Infantil</option>
+              <option value="FUND1">Fund. I</option>
+              <option value="FUND2">Fund. II</option>
+              <option value="MEDIO">Médio</option>
+            </select>
+          </div>
+          <div>
+            <label className="input-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Turno</label>
+            <select className="input" value={classShift} onChange={e => setClassShift(e.target.value)}>
+              <option value="MORNING">Manhã</option>
+              <option value="AFTERNOON">Tarde</option>
+            </select>
+          </div>
+        </div>
+
+        <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', margin: '1.5rem 0' }} />
+
+        <h4 style={{ marginBottom: '0.5rem', color: 'var(--primary-color)' }}>Grade Curricular</h4>
         <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
-          Ajuste a quantidade de aulas na semana e o professor responsável por cada disciplina nesta turma.
+          Ajuste a quantidade de aulas na semana e o professor responsável por cada disciplina.
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', maxHeight: '40vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
           {localCurriculums.map(c => (
             <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '1rem', alignItems: 'center' }}>
               <strong style={{ fontSize: '0.875rem' }}>{c.subject.name}</strong>
