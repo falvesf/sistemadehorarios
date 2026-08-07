@@ -76,3 +76,22 @@ export async function deleteClass(id: string) {
     return { success: false, error: e.message };
   }
 }
+
+export async function updateClass(id: string, data: { name: string, level: string, shift: string }) {
+  try {
+    await prisma.class.update({
+      where: { id },
+      data: {
+        name: data.name,
+        level: data.level,
+        shift: data.shift
+      }
+    });
+    revalidatePath('/turmas');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
