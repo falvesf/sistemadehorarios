@@ -19,9 +19,13 @@ export default async function RestricoesPage() {
     orderBy: [{ dayOfWeek: 'asc' }, { period: 'asc' }]
   });
 
+  const timeSlots = await prisma.timeSlot.findMany({
+    orderBy: [{ level: 'asc' }, { shift: 'asc' }, { dayOfWeek: 'asc' }, { period: 'asc' }]
+  });
+
   return (
     <div className={styles.container}>
-      <RestricoesClient teachers={teachers} classes={classes} capelaRules={capelaRules} />
+      <RestricoesClient teachers={teachers} classes={classes} capelaRules={capelaRules} initialTimeSlots={timeSlots} />
     </div>
   );
 }

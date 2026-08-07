@@ -74,3 +74,30 @@ export async function deleteCapelaRule(scheduleId: string) {
     return { success: false, error: e.message };
   }
 }
+
+export async function getTimeSlots() {
+  return await prisma.timeSlot.findMany({
+    orderBy: [
+      { level: 'asc' },
+      { shift: 'asc' },
+      { dayOfWeek: 'asc' },
+      { period: 'asc' }
+    ]
+  });
+}
+
+export async function saveTimeSlots(timeSlots: { id: string, startTime: string, endTime: string }[]) {
+  try {
+    for (const slot of timeSlots) {
+      await prisma.timeSlot.update({
+        where: { id: slot.id },
+        data: { startTime: slot.startTime, endTime: slot.endTime }
+      });
+    }
+    revalidatePath('/restricoes');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}

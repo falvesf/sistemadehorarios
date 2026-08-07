@@ -3,14 +3,15 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { getTeacherAvailability, saveTeacherAvailability, addCapelaRule, deleteCapelaRule } from './actions';
+import { getTeacherAvailability, saveTeacherAvailability, addCapelaRule, deleteCapelaRule, saveTimeSlots } from './actions';
 
 type Teacher = { id: string; name: string };
 type Class = { id: string; name: string; shift: string };
 type Schedule = { id: string; class: { name: string; shift: string }; teacher: { name: string } | null; dayOfWeek: number; period: number };
 type AvailabilitySlot = { dayOfWeek: number; period: number; isAvailable: boolean };
+type TimeSlot = { id: string; level: string; shift: string; dayOfWeek: number; period: number; startTime: string; endTime: string };
 
-export default function RestricoesClient({ teachers, classes, capelaRules }: { teachers: Teacher[], classes: Class[], capelaRules: Schedule[] }) {
+export default function RestricoesClient({ teachers, classes, capelaRules, initialTimeSlots }: { teachers: Teacher[], classes: Class[], capelaRules: Schedule[], initialTimeSlots: TimeSlot[] }) {
   const { showToast } = useToast();
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
@@ -24,6 +25,12 @@ export default function RestricoesClient({ teachers, classes, capelaRules }: { t
   const [capelaPeriod, setCapelaPeriod] = useState<number>(1);
   const [capelaTeacherId, setCapelaTeacherId] = useState<string>(teachers.length > 0 ? teachers[0].id : '');
   const [isAddingCapela, setIsAddingCapela] = useState(false);
+
+  // TimeSlots states
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(initialTimeSlots);
+  const [tsLevel, setTsLevel] = useState<string>('FUND2');
+  const [tsShift, setTsShift] = useState<string>('MORNING');
+  const [isSavingTimeSlots, setIsSavingTimeSlots] = useState(false);
 
   const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
   const morningPeriods = [1, 2, 3, 4, 5, 6];
@@ -91,8 +98,16 @@ export default function RestricoesClient({ teachers, classes, capelaRules }: { t
     ));
   };
 
-  const handleSaveSettings = () => {
-    showToast('Configurações visuais salvas!', 'success');
+  const handleSaveSettings = async () => {
+    setIsSavingTimeSlots(true);
+    const res = await saveTimeSlots(timeSlots);
+    if (res.success) showToast('Configurações de horários salvas!', 'success');
+    else showToast('Erro ao salvar horários.', 'error');
+    setIsSavingTimeSlots(false);
+  };
+
+  const updateTimeSlot = (id: string, field: 'startTime' | 'endTime', value: string) => {
+    setTimeSlots(prev => prev.map(ts => ts.id === id ? { ...ts, [field]: value } : ts));
   };
 
   const handleSaveAvailability = async () => {
@@ -167,19 +182,75 @@ export default function RestricoesClient({ teachers, classes, capelaRules }: { t
       </div>
 
       <div className="table-container" style={{ padding: '2rem', marginBottom: '2rem' }}>
-        <h3 style={{ marginBottom: '1rem', color: 'var(--primary-color)' }}>Horários e Intervalos (Visuais)</h3>
+        <h3 style={{ marginBottom: '1rem', color: 'var(--primary-color)' }}>Horários Exatos das Aulas (Bell Schedules)</h3>
         <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-          Configurações visuais de duração para exibição da grade final.
+          O sistema usará estes horários para detectar se há sobreposição real de tempo quando um professor for agendado para níveis diferentes (ex: Fund I e Fund II).
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
           <div>
-            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Duração aula - Manhã / Tarde</label>
-            <input type="text" className="input" defaultValue="50 minutos (Inf/Fund I), 45 min (Fund II)" />
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Nível</label>
+            <select className="input" value={tsLevel} onChange={e => setTsLevel(e.target.value)}>
+              <option value="INFANTIL">Educação Infantil</option>
+              <option value="FUND1">Ensino Fundamental I</option>
+              <option value="FUND2">Ensino Fundamental II</option>
+            </select>
           </div>
           <div>
-            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Horário de Início (Manhã)</label>
-            <input type="text" className="input" defaultValue="07:15" />
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Turno</label>
+            <select className="input" value={tsShift} onChange={e => setTsShift(e.target.value)}>
+              <option value="MORNING">Manhã</option>
+              <option value="AFTERNOON">Tarde</option>
+            </select>
           </div>
+        </div>
+
+        <div style={{ overflowX: 'auto', marginBottom: '1.5rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '0.875rem' }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '0.5rem', borderBottom: '2px solid var(--border-color)' }}>Período</th>
+                {days.map((d, index) => (
+                  <th key={d} style={{ padding: '0.5rem', borderBottom: '2px solid var(--border-color)' }}>{d}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(tsShift === 'MORNING' ? morningPeriods : afternoonPeriods).map(period => (
+                <tr key={period} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                  <td style={{ padding: '0.5rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                    {tsShift === 'MORNING' ? period : period - 6}ª Aula
+                  </td>
+                  {days.map((_, index) => {
+                    const dayOfWeek = index + 1;
+                    const slot = timeSlots.find(ts => ts.level === tsLevel && ts.shift === tsShift && ts.dayOfWeek === dayOfWeek && ts.period === period);
+                    if (!slot) return <td key={dayOfWeek}>-</td>;
+                    return (
+                      <td key={dayOfWeek} style={{ padding: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center', alignItems: 'center' }}>
+                          <input 
+                            type="time" 
+                            className="input" 
+                            style={{ padding: '0.25rem', width: '90px' }} 
+                            value={slot.startTime} 
+                            onChange={e => updateTimeSlot(slot.id, 'startTime', e.target.value)}
+                          />
+                          <span>-</span>
+                          <input 
+                            type="time" 
+                            className="input" 
+                            style={{ padding: '0.25rem', width: '90px' }} 
+                            value={slot.endTime} 
+                            onChange={e => updateTimeSlot(slot.id, 'endTime', e.target.value)}
+                          />
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
