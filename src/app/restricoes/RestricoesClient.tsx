@@ -1,21 +1,92 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { getTeacherAvailability, saveTeacherAvailability } from './actions';
 
-export default function RestricoesClient() {
+type Teacher = { id: string; name: string };
+type AvailabilitySlot = { dayOfWeek: number; period: number; isAvailable: boolean };
+
+export default function RestricoesClient({ teachers }: { teachers: Teacher[] }) {
   const { showToast } = useToast();
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [grid, setGrid] = useState<AvailabilitySlot[]>([]);
+  const [isLoadingGrid, setIsLoadingGrid] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+  const periods = [1, 2, 3, 4, 5, 6];
+
+  // Initialize a completely available grid
+  const createDefaultGrid = () => {
+    const defaultGrid: AvailabilitySlot[] = [];
+    for (let d = 1; d <= 5; d++) {
+      for (let p = 1; p <= 6; p++) {
+        defaultGrid.push({ dayOfWeek: d, period: p, isAvailable: true });
+      }
+    }
+    return defaultGrid;
+  };
+
+  useEffect(() => {
+    if (showAvailabilityModal && selectedTeacherId) {
+      loadGrid(selectedTeacherId);
+    } else if (showAvailabilityModal && !selectedTeacherId && teachers.length > 0) {
+      setSelectedTeacherId(teachers[0].id);
+    }
+  }, [showAvailabilityModal, selectedTeacherId, teachers]);
+
+  const loadGrid = async (teacherId: string) => {
+    setIsLoadingGrid(true);
+    try {
+      const savedAvailabilities = await getTeacherAvailability(teacherId);
+      const newGrid = createDefaultGrid();
+      
+      // Override default with saved preferences
+      savedAvailabilities.forEach(saved => {
+        const index = newGrid.findIndex(g => g.dayOfWeek === saved.dayOfWeek && g.period === saved.period);
+        if (index !== -1) {
+          newGrid[index].isAvailable = saved.isAvailable;
+        }
+      });
+      
+      setGrid(newGrid);
+    } catch (e) {
+      showToast('Erro ao carregar disponibilidade.', 'error');
+    } finally {
+      setIsLoadingGrid(false);
+    }
+  };
+
+  const handleToggleSlot = (dayOfWeek: number, period: number) => {
+    setGrid(prev => prev.map(slot => 
+      (slot.dayOfWeek === dayOfWeek && slot.period === period) 
+        ? { ...slot, isAvailable: !slot.isAvailable }
+        : slot
+    ));
+  };
 
   const handleSaveSettings = () => {
-    // Simulando salvar configurações gerais
     showToast('Configurações salvas com sucesso!', 'success');
   };
 
-  const handleSaveAvailability = () => {
-    setShowAvailabilityModal(false);
-    showToast('Disponibilidade do professor atualizada!', 'success');
+  const handleSaveAvailability = async () => {
+    if (!selectedTeacherId) return;
+    setIsSaving(true);
+    try {
+      // We only need to save the ones that are false to save DB space, or save all. 
+      // Saving all explicit toggles is safer.
+      const slotsToSave = grid.filter(g => !g.isAvailable); // only save blocked slots
+      await saveTeacherAvailability(selectedTeacherId, slotsToSave);
+      setShowAvailabilityModal(false);
+      showToast('Disponibilidade do professor salva!', 'success');
+    } catch (e) {
+      showToast('Erro ao salvar disponibilidade.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -84,22 +155,77 @@ export default function RestricoesClient() {
         onClose={() => setShowAvailabilityModal(false)}
         title="Disponibilidade Específica"
       >
-        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Selecione um professor para bloquear seus horários indisponíveis.</p>
+        <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Selecione um professor para bloquear seus horários indisponíveis. (Verde = Disponível / Vermelho = Bloqueado)</p>
         
         <div style={{ marginBottom: '1.5rem' }}>
           <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Professor</label>
-          <select className="input">
-             <option>Carregando professores...</option>
+          <select 
+            className="input" 
+            value={selectedTeacherId} 
+            onChange={e => setSelectedTeacherId(e.target.value)}
+          >
+             {teachers.map(t => (
+               <option key={t.id} value={t.id}>{t.name}</option>
+             ))}
           </select>
         </div>
 
-        <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', marginBottom: '1.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-           Grade de seleção de horários será implementada aqui.
-        </div>
+        {isLoadingGrid ? (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Carregando grade...</div>
+        ) : (
+          <div style={{ overflowX: 'auto', marginBottom: '1.5rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '0.875rem' }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '0.5rem', borderBottom: '2px solid var(--border-color)' }}>Aula</th>
+                  {days.map(d => (
+                    <th key={d} style={{ padding: '0.5rem', borderBottom: '2px solid var(--border-color)' }}>{d}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {periods.map(period => (
+                  <tr key={period} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                    <td style={{ padding: '0.5rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{period}ª</td>
+                    {days.map((_, index) => {
+                      const dayOfWeek = index + 1;
+                      const slot = grid.find(g => g.dayOfWeek === dayOfWeek && g.period === period);
+                      const isAvail = slot ? slot.isAvailable : true;
+
+                      return (
+                        <td key={dayOfWeek} style={{ padding: '0.25rem' }}>
+                          <button
+                            onClick={() => handleToggleSlot(dayOfWeek, period)}
+                            style={{
+                              width: '100%',
+                              padding: '0.5rem',
+                              borderRadius: 'var(--radius-sm)',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              color: 'white',
+                              backgroundColor: isAvail ? 'var(--success-color)' : 'var(--danger-color)',
+                              transition: 'opacity 0.2s',
+                              opacity: isAvail ? 0.9 : 1
+                            }}
+                          >
+                            {isAvail ? 'Livre' : 'X'}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
           <button className="btn btn-secondary" onClick={() => setShowAvailabilityModal(false)}>Cancelar</button>
-          <button className="btn btn-primary" onClick={handleSaveAvailability}>Salvar Bloqueios</button>
+          <button className="btn btn-primary" onClick={handleSaveAvailability} disabled={isSaving || isLoadingGrid}>
+            {isSaving ? 'Salvando...' : 'Salvar Bloqueios'}
+          </button>
         </div>
       </Modal>
     </>
