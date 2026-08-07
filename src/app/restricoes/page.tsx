@@ -1,0 +1,66 @@
+import styles from '../professores/professores.module.css';
+
+export default function RestricoesPage() {
+  return (
+    <div className={styles.container}>
+      <header className={styles.header}>
+        <div>
+          <h1>Regras e Capela</h1>
+          <p>Configure as janelas de horários, intervalos e indisponibilidade de professores.</p>
+        </div>
+        <button className="btn btn-primary">Salvar Configurações</button>
+      </header>
+
+      <div className="table-container" style={{ padding: '2rem' }}>
+        <h3 style={{ marginBottom: '1rem', color: 'var(--primary-color)' }}>Horários e Intervalos (Turnos)</h3>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+          Personalize a duração de cada aula (45 min, 50 min) e os horários exatos de intervalo para a Educação Infantil, Fund I e Fund II.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
+          <div>
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Duração aula - Manhã</label>
+            <input type="text" className="input" defaultValue="50 minutos (Inf/Fund I), 45 min (Fund II)" />
+          </div>
+          <div>
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Horário de Início</label>
+            <input type="text" className="input" defaultValue="07:15" />
+          </div>
+        </div>
+
+        <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', margin: '2rem 0' }} />
+
+        <h3 style={{ marginBottom: '1rem', color: 'var(--primary-color)' }}>Dia de Capela</h3>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+          Defina em qual dia da semana ocorre a Capela e quais turmas participam em qual horário. O motor irá reservar este horário.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
+          <div>
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Dia da Semana</label>
+            <select className="input">
+              <option>Segunda-feira</option>
+              <option>Terça-feira</option>
+              <option selected>Quarta-feira</option>
+              <option>Quinta-feira</option>
+              <option>Sexta-feira</option>
+            </select>
+          </div>
+          <div>
+            <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Professor Responsável</label>
+            <select className="input">
+              <option selected>Istanlley</option>
+              <option>Outro</option>
+            </select>
+          </div>
+        </div>
+
+        <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', margin: '2rem 0' }} />
+
+        <h3 style={{ marginBottom: '1rem', color: 'var(--primary-color)' }}>Restrições de Professores</h3>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+          Bloqueie dias inteiros ou horários específicos em que um professor não pode dar aula (ex: professor atua em escola estadual).
+        </p>
+        <button className="btn btn-secondary">Configurar Disponibilidade Específica</button>
+      </div>
+    </div>
+  );
+}
