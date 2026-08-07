@@ -36,19 +36,19 @@ export default function RestricoesPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
           <div>
             <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Dia da Semana</label>
-            <select className="input">
-              <option>Segunda-feira</option>
-              <option>Terça-feira</option>
-              <option selected>Quarta-feira</option>
-              <option>Quinta-feira</option>
-              <option>Sexta-feira</option>
+            <select className="input" defaultValue="Quarta-feira">
+              <option value="Segunda-feira">Segunda-feira</option>
+              <option value="Terça-feira">Terça-feira</option>
+              <option value="Quarta-feira">Quarta-feira</option>
+              <option value="Quinta-feira">Quinta-feira</option>
+              <option value="Sexta-feira">Sexta-feira</option>
             </select>
           </div>
           <div>
             <label className="input-label" style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Professor Responsável</label>
-            <select className="input">
-              <option selected>Istanlley</option>
-              <option>Outro</option>
+            <select className="input" defaultValue="Istanlley">
+              <option value="Istanlley">Istanlley</option>
+              <option value="Outro">Outro</option>
             </select>
           </div>
         </div>
