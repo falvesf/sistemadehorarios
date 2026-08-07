@@ -3,6 +3,8 @@
 import prisma from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 
+import { runGenerator } from './engine';
+
 export async function fetchCurrentSchedule() {
   const schedules = await prisma.schedule.findMany({
     include: {
@@ -21,11 +23,20 @@ export async function fetchCurrentSchedule() {
 }
 
 export async function generateSchedule(mode: 'REPAIR' | 'SCRATCH') {
-  // TODO: Implement the actual algorithm here
-  await new Promise(r => setTimeout(r, 2000));
-  
-  revalidatePath('/gerador');
-  return { success: true, message: 'Algoritmo simulado com sucesso. (Lógica em desenvolvimento)' };
+  try {
+    const res = await runGenerator(mode);
+    revalidatePath('/gerador');
+    
+    if (res.success) {
+      return { success: true, message: `Grade gerada com sucesso! ${res.assigned} aulas alocadas.` };
+    } else {
+      let msg = res.timeout ? 'O limite de cálculo foi atingido. A grade foi gerada parcialmente.' : 'Impossível fechar a grade com as regras atuais.';
+      return { success: true, message: `${msg} (${res.assigned} de ${res.total} alocadas).` }; // Return true so it refreshes grid
+    }
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
 }
 
 export async function updateSlotTeacher(scheduleId: string, newTeacherId: string | null) {
