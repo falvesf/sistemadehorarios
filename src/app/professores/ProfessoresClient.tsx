@@ -20,6 +20,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
   const [name, setName] = useState('');
   const [type, setType] = useState<'REGENTE' | 'AULISTA'>('REGENTE');
   const [isSaving, setIsSaving] = useState(false);
+  const [mergeConfirm, setMergeConfirm] = useState<{ isOpen: boolean, oldName: string, newName: string }>({ isOpen: false, oldName: '', newName: '' });
 
   const handleEditClick = (teacher: Teacher) => {
     setEditingTeacher(teacher);
@@ -33,7 +34,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setIsCreating(true);
   };
 
-  const handleSave = async (forceMerge = false) => {
+  const handleSave = async (isForceMerge: boolean = false) => {
     if (!name.trim()) {
       showToast('O nome não pode ficar vazio.', 'error');
       return;
@@ -42,19 +43,14 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setIsSaving(true);
     try {
       if (editingTeacher) {
-        const res = await updateTeacher(editingTeacher.id, { name, type }, forceMerge);
+        const res = await updateTeacher(editingTeacher.id, { name, type }, isForceMerge);
         if (res?.success) {
           showToast('Professor atualizado com sucesso!', 'success');
           setEditingTeacher(null);
         } else if (res?.error === 'EXISTS' || res?.error?.includes('Unique constraint')) {
-          if (confirm(`Já existe um professor chamado "${name}". Deseja MESCLAR os dois? Todas as matérias de ${editingTeacher.name} serão transferidas para ${name}.`)) {
-            // Recursively call with forceMerge
-            handleSave(true);
-          } else {
-            showToast('Ação cancelada.', 'info');
-          }
+          setMergeConfirm({ isOpen: true, oldName: editingTeacher.name, newName: name });
         } else {
-          showToast('Erro ao atualizar.', 'error');
+          showToast(`Erro: ${res?.error || 'Desconhecido'}`, 'error');
         }
       } else if (isCreating) {
         const res = await createTeacher({ name, type });
@@ -62,11 +58,11 @@ export default function ProfessoresClient({ professores }: { professores: Teache
           showToast('Professor cadastrado com sucesso!', 'success');
           setIsCreating(false);
         } else {
-          showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : 'Erro ao cadastrar.', 'error');
+          showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : `Erro: ${res?.error}`, 'error');
         }
       }
-    } catch (e) {
-      showToast('Erro interno.', 'error');
+    } catch (e: any) {
+      showToast(`Erro interno: ${e.message}`, 'error');
     } finally {
       setIsSaving(false);
     }
@@ -169,6 +165,29 @@ export default function ProfessoresClient({ professores }: { professores: Teache
               {isSaving ? 'Salvando...' : 'Salvar'}
             </button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={mergeConfirm.isOpen} onClose={() => setMergeConfirm({ ...mergeConfirm, isOpen: false })} title="Confirmar Mesclagem">
+        <div style={{ marginBottom: '1.5rem' }}>
+          <p style={{ marginBottom: '1rem' }}>
+            Já existe um professor chamado <strong>{mergeConfirm.newName}</strong>.
+          </p>
+          <p style={{ color: 'var(--danger-color)', fontWeight: 'bold' }}>
+            Deseja MESCLAR os dois cadastros?
+          </p>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+            Todas as turmas e aulas atribuídas a <em>{mergeConfirm.oldName}</em> serão transferidas para <strong>{mergeConfirm.newName}</strong>, e o cadastro antigo será permanentemente excluído.
+          </p>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setMergeConfirm({ ...mergeConfirm, isOpen: false })} disabled={isSaving}>Cancelar</button>
+          <button className="btn btn-primary" onClick={() => {
+            setMergeConfirm({ ...mergeConfirm, isOpen: false });
+            handleSave(true);
+          }} disabled={isSaving}>
+            Confirmar Mesclagem
+          </button>
         </div>
       </Modal>
     </>
