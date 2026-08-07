@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { generateSchedule, updateSlotTeacher } from './actions';
@@ -28,6 +29,13 @@ export default function GeradorClient({ initialSchedules, teachers }: { initialS
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
   const [isSavingSlot, setIsSavingSlot] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>(initialSchedules);
+  
+  const router = useRouter();
+
+  // Keep local state in sync with server props when they revalidate
+  useEffect(() => {
+    setSchedules(initialSchedules);
+  }, [initialSchedules]);
 
   const handleGenerateClick = (selectedMode: 'REPAIR' | 'SCRATCH') => {
     setMode(selectedMode);
@@ -67,9 +75,8 @@ export default function GeradorClient({ initialSchedules, teachers }: { initialS
       if (res?.success) {
         showToast('Professor atualizado para esta disciplina com sucesso!', 'success');
         setEditingSlot(null);
-        // Note: Next.js revalidatePath will refresh the page props on the next navigation or automatically if using server components properly.
-        // For an immediate local update, we can also refresh the router.
-        window.location.reload(); 
+        // This refetches the server data seamlessly in the background without losing local state (activeClass)
+        router.refresh(); 
       } else {
         showToast('Erro ao atualizar horário.', 'error');
       }
