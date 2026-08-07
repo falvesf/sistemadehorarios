@@ -9,8 +9,12 @@ import styles from './professores.module.css';
 type Teacher = {
   id: string;
   name: string;
-  type: 'REGENTE' | 'AULISTA';
-  curriculums: any[];
+  type: string;
+  curriculums: {
+    id: string;
+    class: { name: string; shift: string };
+    subject: { name: string };
+  }[];
 };
 
 export default function ProfessoresClient({ professores }: { professores: Teacher[] }) {
@@ -18,7 +22,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [name, setName] = useState('');
-  const [type, setType] = useState<'REGENTE' | 'AULISTA'>('REGENTE');
+  const [type, setType] = useState<string>('REGENTE');
   const [isSaving, setIsSaving] = useState(false);
   const [mergeConfirm, setMergeConfirm] = useState<{ isOpen: boolean, oldName: string, newName: string }>({ isOpen: false, oldName: '', newName: '' });
 
@@ -43,7 +47,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setIsSaving(true);
     try {
       if (editingTeacher) {
-        const res = await updateTeacher(editingTeacher.id, { name, type }, isForceMerge);
+        const res = await updateTeacher(editingTeacher.id, { name, type: type as 'REGENTE' | 'AULISTA' }, isForceMerge);
         if (res?.success) {
           showToast('Professor atualizado com sucesso!', 'success');
           setEditingTeacher(null);
@@ -53,7 +57,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
           showToast(`Erro: ${res?.error || 'Desconhecido'}`, 'error');
         }
       } else if (isCreating) {
-        const res = await createTeacher({ name, type });
+        const res = await createTeacher({ name, type: type as 'REGENTE' | 'AULISTA' });
         if (res?.success) {
           showToast('Professor cadastrado com sucesso!', 'success');
           setIsCreating(false);
