@@ -33,7 +33,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setIsCreating(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (forceMerge = false) => {
     if (!name.trim()) {
       showToast('O nome não pode ficar vazio.', 'error');
       return;
@@ -42,12 +42,19 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setIsSaving(true);
     try {
       if (editingTeacher) {
-        const res = await updateTeacher(editingTeacher.id, { name, type });
+        const res = await updateTeacher(editingTeacher.id, { name, type }, forceMerge);
         if (res?.success) {
           showToast('Professor atualizado com sucesso!', 'success');
           setEditingTeacher(null);
+        } else if (res?.error === 'EXISTS' || res?.error?.includes('Unique constraint')) {
+          if (confirm(`Já existe um professor chamado "${name}". Deseja MESCLAR os dois? Todas as matérias de ${editingTeacher.name} serão transferidas para ${name}.`)) {
+            // Recursively call with forceMerge
+            handleSave(true);
+          } else {
+            showToast('Ação cancelada.', 'info');
+          }
         } else {
-          showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : 'Erro ao atualizar.', 'error');
+          showToast('Erro ao atualizar.', 'error');
         }
       } else if (isCreating) {
         const res = await createTeacher({ name, type });
@@ -158,7 +165,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
           ) : <div></div>}
           <div style={{ display: 'flex', gap: '1rem' }}>
             <button className="btn btn-secondary" onClick={() => { setEditingTeacher(null); setIsCreating(false); }}>Cancelar</button>
-            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
+            <button className="btn btn-primary" onClick={() => handleSave(false)} disabled={isSaving}>
               {isSaving ? 'Salvando...' : 'Salvar'}
             </button>
           </div>
