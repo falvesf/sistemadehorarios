@@ -50,7 +50,7 @@ export default function GeradorClient({ initialSchedules, teachers }: { initialS
     try {
       const result = await generateSchedule(mode);
       if (result.success) {
-        showToast(result.message, 'success');
+        showToast(result.message || 'Sucesso!', 'success');
         // In a real scenario, we'd fetch the new schedules and highlight differences
       } else {
         showToast('Erro ao gerar.', 'error');

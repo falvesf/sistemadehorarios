@@ -72,7 +72,7 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     if (isUnavail) return false;
 
     // Check teacher time overlap
-    const mySlot = timeSlots.find(ts => ts.level === level && ts.shift === shift && ts.dayOfWeek === day && ts.period === period);
+    const mySlot = timeSlots.find((ts: any) => ts.level === level && ts.shift === shift && ts.dayOfWeek === day && ts.period === period);
     if (!mySlot) return true; // fallback if no timeslot defined
 
     const teacherAssignments = assignments.filter(a => a.teacherId === teacherId && a.dayOfWeek === day);
@@ -80,7 +80,7 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
       // Find the timeslot for this assignment
       const taClass = classes.find(c => c.id === ta.classId);
       if (!taClass) continue;
-      const taSlot = timeSlots.find(ts => ts.level === taClass.level && ts.shift === taClass.shift && ts.dayOfWeek === day && ts.period === ta.period);
+      const taSlot = timeSlots.find((ts: any) => ts.level === taClass.level && ts.shift === taClass.shift && ts.dayOfWeek === day && ts.period === ta.period);
       if (taSlot) {
         if (doTimeSlotsOverlap(mySlot, taSlot)) {
           return false;
