@@ -62,3 +62,17 @@ export async function updateCurriculum(id: string, classesPerWeek: number, teach
   revalidatePath('/turmas');
   revalidatePath('/professores');
 }
+
+export async function deleteClass(id: string) {
+  try {
+    await prisma.class.delete({
+      where: { id }
+    });
+    revalidatePath('/turmas');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}

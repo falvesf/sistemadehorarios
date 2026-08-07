@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { updateCurriculum } from '../actions';
+import { updateCurriculum, deleteClass } from '../actions';
 import styles from '../professores/professores.module.css';
 
 type Curriculum = {
@@ -61,6 +61,26 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
       setEditingTurma(null);
     } catch (e) {
       showToast('Erro ao atualizar a grade curricular.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteClass = async () => {
+    if (!editingTurma) return;
+    if (!confirm(`Tem certeza que deseja apagar a turma ${editingTurma.name} inteira do sistema? Isso apagará toda a grade curricular e horários associados a ela e não pode ser desfeito.`)) return;
+
+    setIsSaving(true);
+    try {
+      const res = await deleteClass(editingTurma.id);
+      if (res?.success) {
+        showToast('Turma excluída com sucesso!', 'success');
+        setEditingTurma(null);
+      } else {
+        showToast('Erro ao excluir turma.', 'error');
+      }
+    } catch (e) {
+      showToast('Erro interno.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -141,11 +161,17 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
           {localCurriculums.length === 0 && <p style={{color: 'var(--text-secondary)'}}>Nenhuma disciplina vinculada.</p>}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-          <button className="btn btn-secondary" onClick={() => setEditingTurma(null)}>Cancelar</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? 'Salvando...' : 'Salvar Alterações'}
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+          <button className="btn btn-secondary" style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }} onClick={handleDeleteClass} disabled={isSaving}>
+            Excluir Turma
           </button>
+          
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <button className="btn btn-secondary" onClick={() => setEditingTurma(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Salvando...' : 'Salvar Alterações'}
+            </button>
+          </div>
         </div>
       </Modal>
     </>
