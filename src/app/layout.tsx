@@ -19,7 +19,7 @@ export default function RootLayout({
         <div className={styles.appContainer}>
           <aside className={styles.sidebar}>
             <div className={styles.logo}>
-              <h2>Urânia Pro</h2>
+              <h2>ChronoGrid</h2>
             </div>
             <nav className={styles.nav}>
               <Link href="/" className={styles.navLink}>Dashboard</Link>
