@@ -34,3 +34,43 @@ export async function saveTeacherAvailability(teacherId: string, availabilities:
   revalidatePath('/restricoes');
   return { success: true };
 }
+
+export async function addCapelaRule(classIds: string[], dayOfWeek: number, period: number, teacherId: string) {
+  try {
+    let capelaSubject = await prisma.subject.findUnique({ where: { name: 'Capela' } });
+    if (!capelaSubject) {
+      capelaSubject = await prisma.subject.create({ data: { name: 'Capela' } });
+    }
+
+    const data = classIds.map(classId => ({
+      classId,
+      subjectId: capelaSubject!.id,
+      teacherId,
+      dayOfWeek,
+      period,
+      isFixed: true
+    }));
+
+    await prisma.schedule.deleteMany({
+      where: { classId: { in: classIds }, dayOfWeek, period }
+    });
+
+    await prisma.schedule.createMany({ data });
+    revalidatePath('/restricoes');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deleteCapelaRule(scheduleId: string) {
+  try {
+    await prisma.schedule.delete({ where: { id: scheduleId } });
+    revalidatePath('/restricoes');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}

@@ -8,9 +8,20 @@ export default async function RestricoesPage() {
     select: { id: true, name: true }
   });
 
+  const classes = await prisma.class.findMany({
+    orderBy: [{ shift: 'asc' }, { name: 'asc' }],
+    select: { id: true, name: true, shift: true }
+  });
+
+  const capelaRules = await prisma.schedule.findMany({
+    where: { subject: { name: 'Capela' }, isFixed: true },
+    include: { class: { select: { name: true, shift: true } }, teacher: { select: { name: true } } },
+    orderBy: [{ dayOfWeek: 'asc' }, { period: 'asc' }]
+  });
+
   return (
     <div className={styles.container}>
-      <RestricoesClient teachers={teachers} />
+      <RestricoesClient teachers={teachers} classes={classes} capelaRules={capelaRules} />
     </div>
   );
 }
