@@ -165,14 +165,12 @@ async function main() {
              });
           }
 
-          // Se for capela, já cadastra o schedule fixo
-          if (isFixed) {
-            await prisma.schedule.create({
-              data: {
-                classId, subjectId, teacherId, dayOfWeek: dayIndex, period: periodIndex, isFixed: true
-              }
-            });
-          }
+          // Cadastra o schedule para todas as matérias
+          await prisma.schedule.create({
+            data: {
+              classId, subjectId, teacherId, dayOfWeek: dayIndex, period: periodIndex, isFixed
+            }
+          });
         }
       }
       periodIndex++;

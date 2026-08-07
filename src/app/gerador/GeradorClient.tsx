@@ -3,60 +3,164 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { generateSchedule } from './actions';
 
-export default function GeradorClient() {
+type ScheduleEntry = {
+  id: string;
+  dayOfWeek: number;
+  period: number;
+  isFixed: boolean;
+  class: { name: string; level: string };
+  subject: { name: string };
+  teacher: { name: string } | null;
+};
+
+export default function GeradorClient({ initialSchedules }: { initialSchedules: ScheduleEntry[] }) {
   const { showToast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [mode, setMode] = useState<'REPAIR' | 'SCRATCH'>('REPAIR');
+  const [schedules, setSchedules] = useState<ScheduleEntry[]>(initialSchedules);
 
-  const handleGenerateClick = () => {
+  const handleGenerateClick = (selectedMode: 'REPAIR' | 'SCRATCH') => {
+    setMode(selectedMode);
     setShowConfirmModal(true);
   };
 
   const handleConfirmGeneration = async () => {
     setShowConfirmModal(false);
     setIsGenerating(true);
-    showToast('Iniciando o motor de geração de horários...', 'info');
+    showToast('Iniciando o motor de geração...', 'info');
 
     try {
-      // Simulate API call for now
-      await new Promise(r => setTimeout(r, 2000));
-      
-      showToast('Horários gerados com sucesso!', 'success');
+      const result = await generateSchedule(mode);
+      if (result.success) {
+        showToast(result.message, 'success');
+        // In a real scenario, we'd fetch the new schedules and highlight differences
+      } else {
+        showToast('Erro ao gerar.', 'error');
+      }
     } catch (error) {
-      showToast('Erro ao gerar horários. Tente novamente.', 'error');
+      showToast('Erro ao comunicar com o motor.', 'error');
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // Agrupar schedules por turma
+  const classesMap = new Map<string, ScheduleEntry[]>();
+  schedules.forEach(s => {
+    if (!classesMap.has(s.class.name)) classesMap.set(s.class.name, []);
+    classesMap.get(s.class.name)!.push(s);
+  });
+  
+  const classNames = Array.from(classesMap.keys());
+  const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+
   return (
     <>
-      <div className="table-container" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-        <h2>Pronto para iniciar?</h2>
-        <p>O algoritmo levará em consideração a disponibilidade dos professores, turmas, dias de capela e evitará colisões.</p>
-        <br />
-        <button 
-          className="btn btn-primary" 
-          style={{ padding: '1rem 2rem', fontSize: '1.25rem', opacity: isGenerating ? 0.7 : 1 }}
-          onClick={handleGenerateClick}
-          disabled={isGenerating}
-        >
-          {isGenerating ? '⏳ Gerando Horários...' : '✨ Iniciar Geração Automática'}
-        </button>
+      <div className="table-container" style={{ padding: '2rem', textAlign: 'center', marginBottom: '2rem' }}>
+        <h2 style={{ marginBottom: '1rem' }}>Controle do Motor Gerador</h2>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
+          Escolha como deseja que o algoritmo trabalhe. Recomendamos o modo de <strong>Recálculo</strong> para preservar a grade atual.
+        </p>
+        
+        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+          <button 
+            className="btn btn-primary" 
+            style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', opacity: isGenerating ? 0.7 : 1 }}
+            onClick={() => handleGenerateClick('REPAIR')}
+            disabled={isGenerating}
+          >
+            {isGenerating && mode === 'REPAIR' ? '⏳ Recalculando...' : '✨ Recalcular Conflitos (Recomendado)'}
+          </button>
+
+          <button 
+            className="btn btn-secondary" 
+            style={{ padding: '0.75rem 1.5rem', fontSize: '1rem', opacity: isGenerating ? 0.7 : 1 }}
+            onClick={() => handleGenerateClick('SCRATCH')}
+            disabled={isGenerating}
+          >
+             {isGenerating && mode === 'SCRATCH' ? '⏳ Gerando...' : '⚠️ Gerar do Zero'}
+          </button>
+        </div>
       </div>
+
+      <h3 style={{ marginBottom: '1rem' }}>Grade de Horários Atual</h3>
+      
+      {classNames.map(className => {
+        const classSchedules = classesMap.get(className) || [];
+        // Max period in this class
+        const maxPeriod = classSchedules.reduce((max, s) => s.period > max ? s.period : max, 0) || 5;
+
+        return (
+          <div key={className} className="table-container" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+            <h4 style={{ color: 'var(--primary-color)', marginBottom: '1rem', fontSize: '1.2rem' }}>Turma: {className}</h4>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead>
+                  <tr>
+                    <th style={{ borderBottom: '2px solid var(--border-color)', padding: '0.5rem', textAlign: 'left' }}>Aula</th>
+                    {days.map((d, i) => (
+                      <th key={d} style={{ borderBottom: '2px solid var(--border-color)', padding: '0.5rem', textAlign: 'left' }}>{d}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: maxPeriod }).map((_, periodIndex) => {
+                    const period = periodIndex + 1;
+                    return (
+                      <tr key={period} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        <td style={{ padding: '0.5rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>{period}ª Aula</td>
+                        {days.map((_, dayIndex) => {
+                          const day = dayIndex + 1; // 1 to 5
+                          const slot = classSchedules.find(s => s.dayOfWeek === day && s.period === period);
+                          return (
+                            <td key={day} style={{ padding: '0.5rem' }}>
+                              {slot ? (
+                                <div style={{ 
+                                  backgroundColor: slot.isFixed ? '#fef3c7' : 'var(--bg-primary)', 
+                                  padding: '0.5rem', 
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--border-color)'
+                                }}>
+                                  <div style={{ fontWeight: 'bold' }}>{slot.subject.name}</div>
+                                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                                    {slot.teacher ? slot.teacher.name : 'Sem Prof.'}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ color: '#ccc', fontStyle: 'italic', padding: '0.5rem' }}>Vago</div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
 
       <Modal 
         isOpen={showConfirmModal} 
-        onClose={() => setShowConfirmModal(false)}
-        title="Confirmar Geração"
+        onClose={() => !isGenerating && setShowConfirmModal(false)}
+        title={mode === 'REPAIR' ? 'Confirmar Recálculo' : 'Atenção: Geração do Zero'}
       >
         <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
-          Atenção: Iniciar uma nova geração de horários irá sobrescrever a grade gerada anteriormente (exceto os horários fixos como Capela). Deseja continuar?
+          {mode === 'REPAIR' 
+            ? 'O sistema tentará resolver os conflitos de horário alterando apenas o necessário e preservando a maior parte da grade atual. Deseja continuar?'
+            : 'ATENÇÃO: A grade inteira será apagada e o algoritmo tentará encaixar todas as aulas novamente do zero. Isso mudará completamente os horários atuais. Deseja continuar?'
+          }
         </p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
           <button className="btn btn-secondary" onClick={() => setShowConfirmModal(false)}>Cancelar</button>
-          <button className="btn btn-primary" onClick={handleConfirmGeneration}>Sim, Gerar Horários</button>
+          <button className={mode === 'REPAIR' ? 'btn btn-primary' : 'btn btn-primary'} style={mode === 'SCRATCH' ? { backgroundColor: 'var(--danger-color)' } : {}} onClick={handleConfirmGeneration}>
+            Sim, Iniciar
+          </button>
         </div>
       </Modal>
     </>
