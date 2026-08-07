@@ -1,4 +1,5 @@
 import styles from '../professores/professores.module.css';
+import GeradorClient from './GeradorClient';
 
 export default function GeradorPage() {
   return (
@@ -8,17 +9,10 @@ export default function GeradorPage() {
           <h1>Motor Gerador de Horários</h1>
           <p>Configure as opções e inicie o algoritmo inteligente para alocar as aulas.</p>
         </div>
-        <button className="btn btn-primary">Gerar Horários</button>
+        {/* Placeholder for top button if needed */}
       </header>
 
-      <div className="table-container" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-        <h2>Pronto para iniciar?</h2>
-        <p>O algoritmo levará em consideração a disponibilidade dos professores, turmas, dias de capela e evitará colisões.</p>
-        <br />
-        <button className="btn btn-primary" style={{ padding: '1rem 2rem', fontSize: '1.25rem' }}>
-          ✨ Iniciar Geração Automática
-        </button>
-      </div>
+      <GeradorClient />
     </div>
   );
 }

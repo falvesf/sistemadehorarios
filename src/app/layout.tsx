@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import './globals.css';
 import styles from './layout.module.css';
 import Link from 'next/link';
+import { ToastProvider } from '@/components/Toast';
 
 export const metadata: Metadata = {
-  title: 'Sistema de Horários',
+  title: 'ChronoGrid',
   description: 'Gerador inteligente de horários escolares',
 };
 
@@ -16,7 +17,8 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
-        <div className={styles.appContainer}>
+        <ToastProvider>
+          <div className={styles.appContainer}>
           <aside className={styles.sidebar}>
             <div className={styles.logo}>
               <h2>ChronoGrid</h2>
@@ -33,6 +35,7 @@ export default function RootLayout({
             {children}
           </main>
         </div>
+        </ToastProvider>
       </body>
     </html>
   );
