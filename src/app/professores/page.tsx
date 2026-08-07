@@ -19,7 +19,6 @@ export default async function ProfessoresPage() {
           <h1>Professores</h1>
           <p>Gerencie os professores regentes e aulistas da escola.</p>
         </div>
-        <button className="btn btn-primary">+ Novo Professor</button>
       </header>
 
       <ProfessoresClient professores={professores} />

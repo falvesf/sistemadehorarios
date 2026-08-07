@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { updateTeacher } from '../actions';
+import { updateTeacher, createTeacher } from '../actions';
 import styles from './professores.module.css';
 
 type Teacher = {
@@ -16,6 +16,7 @@ type Teacher = {
 export default function ProfessoresClient({ professores }: { professores: Teacher[] }) {
   const { showToast } = useToast();
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [name, setName] = useState('');
   const [type, setType] = useState<'REGENTE' | 'AULISTA'>('REGENTE');
   const [isSaving, setIsSaving] = useState(false);
@@ -26,15 +27,39 @@ export default function ProfessoresClient({ professores }: { professores: Teache
     setType(teacher.type);
   };
 
+  const handleCreateClick = () => {
+    setName('');
+    setType('REGENTE');
+    setIsCreating(true);
+  };
+
   const handleSave = async () => {
-    if (!editingTeacher) return;
+    if (!name.trim()) {
+      showToast('O nome não pode ficar vazio.', 'error');
+      return;
+    }
+    
     setIsSaving(true);
     try {
-      await updateTeacher(editingTeacher.id, { name, type });
-      showToast('Professor atualizado com sucesso!', 'success');
-      setEditingTeacher(null);
+      if (editingTeacher) {
+        const res = await updateTeacher(editingTeacher.id, { name, type });
+        if (res?.success) {
+          showToast('Professor atualizado com sucesso!', 'success');
+          setEditingTeacher(null);
+        } else {
+          showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : 'Erro ao atualizar.', 'error');
+        }
+      } else if (isCreating) {
+        const res = await createTeacher({ name, type });
+        if (res?.success) {
+          showToast('Professor cadastrado com sucesso!', 'success');
+          setIsCreating(false);
+        } else {
+          showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : 'Erro ao cadastrar.', 'error');
+        }
+      }
     } catch (e) {
-      showToast('Erro ao atualizar professor.', 'error');
+      showToast('Erro interno.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -42,6 +67,10 @@ export default function ProfessoresClient({ professores }: { professores: Teache
 
   return (
     <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+        <button className="btn btn-primary" onClick={handleCreateClick}>+ Novo Professor</button>
+      </div>
+
       <div className="table-container">
         <table>
           <thead>
@@ -80,7 +109,7 @@ export default function ProfessoresClient({ professores }: { professores: Teache
         </table>
       </div>
 
-      <Modal isOpen={!!editingTeacher} onClose={() => setEditingTeacher(null)} title="Editar Professor">
+      <Modal isOpen={!!editingTeacher || isCreating} onClose={() => { setEditingTeacher(null); setIsCreating(false); }} title={isCreating ? "Novo Professor" : "Editar Professor"}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
           <div>
             <label className="input-label" style={{ display: 'block', marginBottom: '0.5rem' }}>Nome</label>
@@ -104,9 +133,9 @@ export default function ProfessoresClient({ professores }: { professores: Teache
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-          <button className="btn btn-secondary" onClick={() => setEditingTeacher(null)}>Cancelar</button>
+          <button className="btn btn-secondary" onClick={() => { setEditingTeacher(null); setIsCreating(false); }}>Cancelar</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? 'Salvando...' : 'Salvar Alterações'}
+            {isSaving ? 'Salvando...' : 'Salvar'}
           </button>
         </div>
       </Modal>
