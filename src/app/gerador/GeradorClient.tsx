@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
