@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Teacher {
+  id             String         @id @default(uuid())
+  name           String         @unique
+  type           String         // REGENTE or AULISTA
+  curriculums    Curriculum[]
+  availabilities Availability[]
+  schedules      Schedule[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model Class {
+  id          String       @id @default(uuid())
+  name        String       @unique // e.g., "6º ano A"
+  shift       String       // MORNING or AFTERNOON
+  level       String       // INFANTIL, FUND1, FUND2, MEDIO
+  regenteName String?      // For INFANTIL/FUND1
+  curriculums Curriculum[]
+  schedules   Schedule[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Subject {
+  id          String       @id @default(uuid())
+  name        String       @unique // e.g., "Matemática", "Português", "Capela"
+  curriculums Curriculum[]
+  schedules   Schedule[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Curriculum {
+  id             String  @id @default(uuid())
+  classId        String
+  class          Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subjectId      String
+  subject        Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacherId      String?
+  teacher        Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  classesPerWeek Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([classId, subjectId])
+}
+
+model Availability {
+  id        String  @id @default(uuid())
+  teacherId String
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  dayOfWeek Int     // 1=Monday ... 5=Friday
+  period    Int?    // 1st class, 2nd class, etc. If null, applies to whole day? Let's use startTime/endTime or just period
+  isAvailable Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Schedule {
+  id        String  @id @default(uuid())
+  classId   String
+  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacherId String?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  dayOfWeek Int     // 1=Monday ... 5=Friday
+  period    Int     // 1, 2, 3, 4, 5... (1ª aula, 2ª aula)
+  isFixed   Boolean @default(false) // For Chapel or locked classes
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([classId, dayOfWeek, period])
+}
