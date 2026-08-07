@@ -4,6 +4,10 @@ import { fetchCurrentSchedule } from './actions';
 
 export default async function GeradorPage() {
   const schedules = await fetchCurrentSchedule();
+  const teachers = await prisma.teacher.findMany({
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true }
+  });
 
   return (
     <div className={styles.container}>
@@ -14,7 +18,7 @@ export default async function GeradorPage() {
         </div>
       </header>
 
-      <GeradorClient initialSchedules={schedules} />
+      <GeradorClient initialSchedules={schedules} teachers={teachers} />
     </div>
   );
 }

@@ -1,9 +1,7 @@
-'use client';
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { generateSchedule } from './actions';
+import { generateSchedule, updateSlotTeacher } from './actions';
 
 type ScheduleEntry = {
   id: string;
@@ -15,11 +13,18 @@ type ScheduleEntry = {
   teacher: { name: string } | null;
 };
 
-export default function GeradorClient({ initialSchedules }: { initialSchedules: ScheduleEntry[] }) {
+type Teacher = { id: string; name: string };
+
+export default function GeradorClient({ initialSchedules, teachers }: { initialSchedules: ScheduleEntry[], teachers: Teacher[] }) {
   const { showToast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [mode, setMode] = useState<'REPAIR' | 'SCRATCH'>('REPAIR');
+  
+  // States for Editing Slot
+  const [editingSlot, setEditingSlot] = useState<ScheduleEntry | null>(null);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [isSavingSlot, setIsSavingSlot] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>(initialSchedules);
 
   const handleGenerateClick = (selectedMode: 'REPAIR' | 'SCRATCH') => {
@@ -44,6 +49,32 @@ export default function GeradorClient({ initialSchedules }: { initialSchedules: 
       showToast('Erro ao comunicar com o motor.', 'error');
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleSlotClick = (slot: ScheduleEntry) => {
+    setEditingSlot(slot);
+    setSelectedTeacherId(slot.teacher?.id || '');
+  };
+
+  const handleSaveSlot = async () => {
+    if (!editingSlot) return;
+    setIsSavingSlot(true);
+    try {
+      const res = await updateSlotTeacher(editingSlot.id, selectedTeacherId || null);
+      if (res?.success) {
+        showToast('Professor atualizado para esta disciplina com sucesso!', 'success');
+        setEditingSlot(null);
+        // Note: Next.js revalidatePath will refresh the page props on the next navigation or automatically if using server components properly.
+        // For an immediate local update, we can also refresh the router.
+        window.location.reload(); 
+      } else {
+        showToast('Erro ao atualizar horário.', 'error');
+      }
+    } catch (e) {
+      showToast('Erro interno.', 'error');
+    } finally {
+      setIsSavingSlot(false);
     }
   };
 
@@ -118,12 +149,20 @@ export default function GeradorClient({ initialSchedules }: { initialSchedules: 
                           return (
                             <td key={day} style={{ padding: '0.5rem' }}>
                               {slot ? (
-                                <div style={{ 
-                                  backgroundColor: slot.isFixed ? '#fef3c7' : 'var(--bg-primary)', 
-                                  padding: '0.5rem', 
-                                  borderRadius: 'var(--radius-sm)',
-                                  border: '1px solid var(--border-color)'
-                                }}>
+                                <div 
+                                  onClick={() => handleSlotClick(slot)}
+                                  style={{ 
+                                    backgroundColor: slot.isFixed ? '#fef3c7' : 'var(--bg-primary)', 
+                                    padding: '0.5rem', 
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: '1px solid var(--border-color)',
+                                    cursor: 'pointer',
+                                    transition: 'border-color 0.2s'
+                                  }}
+                                  onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--primary-color)'}
+                                  onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                                  title="Clique para trocar o professor desta disciplina"
+                                >
                                   <div style={{ fontWeight: 'bold' }}>{slot.subject.name}</div>
                                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
                                     {slot.teacher ? slot.teacher.name : 'Sem Prof.'}
@@ -162,6 +201,42 @@ export default function GeradorClient({ initialSchedules }: { initialSchedules: 
             Sim, Iniciar
           </button>
         </div>
+      </Modal>
+
+      <Modal 
+        isOpen={!!editingSlot}
+        onClose={() => !isSavingSlot && setEditingSlot(null)}
+        title="Trocar Professor da Disciplina"
+      >
+        {editingSlot && (
+          <>
+            <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
+              Alterar o professor de <strong>{editingSlot.subject.name}</strong> da turma <strong>{editingSlot.class.name}</strong>.
+              Isso atualizará a Grade Curricular desta turma para este professor.
+            </p>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Novo Professor</label>
+              <select 
+                className="input" 
+                value={selectedTeacherId} 
+                onChange={e => setSelectedTeacherId(e.target.value)}
+              >
+                <option value="">(Sem Professor)</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setEditingSlot(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleSaveSlot} disabled={isSavingSlot}>
+                {isSavingSlot ? 'Salvando...' : 'Salvar Alteração'}
+              </button>
+            </div>
+          </>
+        )}
       </Modal>
     </>
   );
