@@ -1,6 +1,7 @@
 import styles from '../professores/professores.module.css';
 import GeradorClient from './GeradorClient';
 import { fetchCurrentSchedule } from './actions';
+import prisma from '@/lib/prisma';
 
 export default async function GeradorPage() {
   const schedules = await fetchCurrentSchedule();

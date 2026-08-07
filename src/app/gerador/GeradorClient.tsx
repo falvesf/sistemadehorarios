@@ -10,7 +10,7 @@ type ScheduleEntry = {
   isFixed: boolean;
   class: { name: string; level: string };
   subject: { name: string };
-  teacher: { name: string } | null;
+  teacher: { id: string; name: string } | null;
 };
 
 type Teacher = { id: string; name: string };
