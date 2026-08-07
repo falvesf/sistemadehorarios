@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { updateTeacher, createTeacher } from '../actions';
+import { updateTeacher, createTeacher, deleteTeacher } from '../actions';
 import styles from './professores.module.css';
 
 type Teacher = {
@@ -57,6 +57,26 @@ export default function ProfessoresClient({ professores }: { professores: Teache
         } else {
           showToast(res?.error?.includes('Unique constraint') ? 'Este nome já existe.' : 'Erro ao cadastrar.', 'error');
         }
+      }
+    } catch (e) {
+      showToast('Erro interno.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!editingTeacher) return;
+    if (!confirm(`Tem certeza que deseja excluir o(a) professor(a) ${editingTeacher.name}? As matérias dele(a) ficarão "Sem Professor".`)) return;
+    
+    setIsSaving(true);
+    try {
+      const res = await deleteTeacher(editingTeacher.id);
+      if (res?.success) {
+        showToast('Professor excluído com sucesso!', 'success');
+        setEditingTeacher(null);
+      } else {
+        showToast('Erro ao excluir professor.', 'error');
       }
     } catch (e) {
       showToast('Erro interno.', 'error');
@@ -132,11 +152,16 @@ export default function ProfessoresClient({ professores }: { professores: Teache
             </select>
           </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-          <button className="btn btn-secondary" onClick={() => { setEditingTeacher(null); setIsCreating(false); }}>Cancelar</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? 'Salvando...' : 'Salvar'}
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+          {!isCreating ? (
+            <button className="btn btn-secondary" style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }} onClick={handleDelete} disabled={isSaving}>Excluir</button>
+          ) : <div></div>}
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <button className="btn btn-secondary" onClick={() => { setEditingTeacher(null); setIsCreating(false); }}>Cancelar</button>
+            <button className="btn btn-primary" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Salvando...' : 'Salvar'}
+            </button>
+          </div>
         </div>
       </Modal>
     </>

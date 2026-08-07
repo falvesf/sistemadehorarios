@@ -37,6 +37,20 @@ export async function createTeacher(data: { name: string; type: 'REGENTE' | 'AUL
   }
 }
 
+export async function deleteTeacher(id: string) {
+  try {
+    await prisma.teacher.delete({
+      where: { id }
+    });
+    revalidatePath('/professores');
+    revalidatePath('/turmas');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
 export async function updateCurriculum(id: string, classesPerWeek: number, teacherId: string | null) {
   await prisma.curriculum.update({
     where: { id },
