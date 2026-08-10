@@ -35,10 +35,14 @@ export async function generateSchedule(mode: 'REPAIR' | 'SCRATCH') {
     const res = await runGenerator(mode);
     revalidatePath('/gerador');
     
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+    
     if (res.success) {
       return { success: true, message: `Grade gerada com sucesso! ${res.assigned} aulas alocadas.` };
     } else {
-      let msg = res.timeout ? 'O limite de cálculo foi atingido. A grade foi gerada parcialmente.' : 'Impossível fechar a grade com as regras atuais.';
+      let msg = res.timeout ? 'O limite de calculo foi atingido. A grade foi gerada parcialmente.' : 'Impossivel fechar a grade com as regras atuais.';
       return { success: true, message: `${msg} (${res.assigned} de ${res.total} alocadas).` };
     }
   } catch (e: any) {
