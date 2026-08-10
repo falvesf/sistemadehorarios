@@ -52,42 +52,52 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
   fixedSchedules.forEach(s => assignments.push(s));
   
   const days = [1, 2, 3, 4, 5];
-  const morningPeriods = [1, 2, 3, 4, 5, 6];
-  const afternoonPeriods = [7, 8, 9, 10, 11, 12];
+  const periods = [1, 2, 3, 4, 5, 6];
 
   function getPeriods(shift: string) {
-    return shift === 'MORNING' ? morningPeriods : afternoonPeriods;
+    return periods;
+  }
+
+  function normalizePeriod(period: number, shift: string): number {
+    if (shift === 'AFTERNOON' && period > 6) return period - 6;
+    return period;
+  }
+
+  function denormalizePeriod(period: number, shift: string): number {
+    if (shift === 'AFTERNOON') return period + 6;
+    return period;
   }
 
   function isValid(teacherId: string | null, classId: string, day: number, period: number, level: string, shift: string) {
-    // Check class conflict
-    if (assignments.some(a => a.classId === classId && a.dayOfWeek === day && a.period === period)) {
+    // Check class conflict (use denormalized period for comparison with existing assignments)
+    const denormPeriod = denormalizePeriod(period, shift);
+    if (assignments.some(a => a.classId === classId && a.dayOfWeek === day && a.period === denormPeriod)) {
       return false;
     }
 
-    if (!teacherId) return true; // If no teacher assigned yet, any slot for the class is fine
+    if (!teacherId) return true;
 
-    // Check teacher availability restriction
-    const isUnavail = availabilities.some(a => a.teacherId === teacherId && a.dayOfWeek === day && a.period === period && !a.isAvailable);
+    // Check teacher availability restriction (availability uses denormalized periods 1-12)
+    const isUnavail = availabilities.some(a => a.teacherId === teacherId && a.dayOfWeek === day && a.period === denormPeriod && !a.isAvailable);
     if (isUnavail) return false;
 
-    // Check teacher time overlap
-    const mySlot = timeSlots.find((ts: any) => ts.level === level && ts.shift === shift && ts.dayOfWeek === day && ts.period === period);
-    if (!mySlot) return true; // fallback if no timeslot defined
+    // Check teacher time overlap - use normalized period for TimeSlot lookup
+    const normPeriod = normalizePeriod(period, shift);
+    const mySlot = timeSlots.find((ts: any) => ts.level === level && ts.shift === shift && ts.dayOfWeek === day && ts.period === normPeriod);
+    if (!mySlot) return true;
 
     const teacherAssignments = assignments.filter(a => a.teacherId === teacherId && a.dayOfWeek === day);
     for (const ta of teacherAssignments) {
-      // Find the timeslot for this assignment
       const taClass = classes.find(c => c.id === ta.classId);
       if (!taClass) continue;
-      const taSlot = timeSlots.find((ts: any) => ts.level === taClass.level && ts.shift === taClass.shift && ts.dayOfWeek === day && ts.period === ta.period);
+      const taNormPeriod = normalizePeriod(ta.period, taClass.shift);
+      const taSlot = timeSlots.find((ts: any) => ts.level === taClass.level && ts.shift === taClass.shift && ts.dayOfWeek === day && ts.period === taNormPeriod);
       if (taSlot) {
         if (doTimeSlotsOverlap(mySlot, taSlot)) {
           return false;
         }
       } else {
-        // Fallback: if no timeslot, just check if exact same period
-        if (ta.period === period) return false;
+        if (ta.period === denormPeriod) return false;
       }
     }
 
@@ -123,13 +133,14 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
           if (classesThisDay >= 2) continue;
 
           // Make assignment
+          const denormPeriod = denormalizePeriod(period, curr.shift);
           const newAssignment = {
             id: 'temp-' + nodesExplored,
             classId: curr.classId,
             subjectId: curr.subjectId,
             teacherId: curr.teacherId,
             dayOfWeek: day,
-            period: period,
+            period: denormPeriod,
             isFixed: false
           };
           assignments.push(newAssignment);
