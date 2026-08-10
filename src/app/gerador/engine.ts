@@ -1,17 +1,17 @@
 import prisma from '@/lib/prisma';
 
+const MAX_PERIODS_PER_DAY = 6;
+
 function timeToMin(t: string) {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
 }
 
-function doTimeSlotsOverlap(ts1: any, ts2: any) {
-  if (!ts1 || !ts2) return false;
+function doTimeSlotsOverlap(ts1: { startTime: string; endTime: string }, ts2: { startTime: string; endTime: string }) {
   return Math.max(timeToMin(ts1.startTime), timeToMin(ts2.startTime)) < Math.min(timeToMin(ts1.endTime), timeToMin(ts2.endTime));
 }
 
 export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
-  // 1. Fetch all data
   const classes = await prisma.class.findMany();
   const curriculums = await prisma.curriculum.findMany({ include: { class: true } });
   const timeSlots = await prisma.timeSlot.findMany();
@@ -19,208 +19,207 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
   const fixedSchedules = await prisma.schedule.findMany({ where: { isFixed: true } });
   const currentSchedules = await prisma.schedule.findMany({ where: { isFixed: false } });
 
-  // If SCRATCH, we clear all non-fixed schedules
   if (mode === 'SCRATCH') {
     await prisma.schedule.deleteMany({ where: { isFixed: false } });
   }
 
-  // 2. Determine what needs to be scheduled
-  const toSchedule: { classId: string, subjectId: string, teacherId: string | null, shift: string, level: string }[] = [];
-  
-  for (const curr of curriculums) {
-    let alreadyScheduled = 0;
-    if (mode === 'REPAIR') {
-      alreadyScheduled = currentSchedules.filter(s => s.classId === curr.classId && s.subjectId === curr.subjectId).length;
+  // --- Lookup tables ---
+  const classMap = new Map(classes.map(c => [c.id, c]));
+
+  const slotLookup = new Map<string, { startTime: string; endTime: string }>();
+  for (const ts of timeSlots) {
+    slotLookup.set(`${ts.level}-${ts.shift}-${ts.dayOfWeek}-${ts.period}`, ts);
+  }
+
+  const classOccupied = new Map<string, Set<string>>();
+  const teacherDayPeriods = new Map<string, Map<number, Set<number>>>();
+  const teacherUnavailable = new Map<string, Map<number, Set<number>>>();
+  const classDayCount = new Map<string, Map<number, number>>();
+  const classSubjectDayCount = new Map<string, Map<string, Map<number, number>>>();
+
+  function norm(p: number, shift: string) { return shift === 'AFTERNOON' && p > 6 ? p - 6 : p; }
+  function denorm(p: number, shift: string) { return shift === 'AFTERNOON' ? p + 6 : p; }
+
+  function addAssign(cid: string, sid: string, tid: string | null, day: number, dp: number, shift: string) {
+    if (!classOccupied.has(cid)) classOccupied.set(cid, new Set());
+    classOccupied.get(cid)!.add(`${day}-${dp}`);
+
+    if (tid) {
+      if (!teacherDayPeriods.has(tid)) teacherDayPeriods.set(tid, new Map());
+      const dm = teacherDayPeriods.get(tid)!;
+      if (!dm.has(day)) dm.set(day, new Set());
+      dm.get(day)!.add(norm(dp, shift));
     }
-    const needed = curr.classesPerWeek - alreadyScheduled;
-    for (let i = 0; i < needed; i++) {
-      toSchedule.push({ 
-        classId: curr.classId, 
-        subjectId: curr.subjectId, 
-        teacherId: curr.teacherId,
-        shift: curr.class.shift,
-        level: curr.class.level
-      });
+
+    if (!classDayCount.has(cid)) classDayCount.set(cid, new Map());
+    const dc = classDayCount.get(cid)!;
+    dc.set(day, (dc.get(day) || 0) + 1);
+
+    if (!classSubjectDayCount.has(cid)) classSubjectDayCount.set(cid, new Map());
+    const csm = classSubjectDayCount.get(cid)!;
+    if (!csm.has(sid)) csm.set(sid, new Map());
+    csm.get(sid)!.set(day, (csm.get(sid)!.get(day) || 0) + 1);
+  }
+
+  function removeAssign(cid: string, sid: string, tid: string | null, day: number, dp: number, shift: string) {
+    classOccupied.get(cid)?.delete(`${day}-${dp}`);
+    if (tid) teacherDayPeriods.get(tid)?.get(day)?.delete(norm(dp, shift));
+
+    const dc = classDayCount.get(cid);
+    if (dc) { const p = dc.get(day) || 0; p <= 1 ? dc.delete(day) : dc.set(day, p - 1); }
+
+    const csm = classSubjectDayCount.get(cid)?.get(sid);
+    if (csm) { const p = csm.get(day) || 0; p <= 1 ? csm.delete(day) : csm.set(day, p - 1); }
+  }
+
+  function loadExisting(s: any) {
+    const c = classMap.get(s.classId);
+    if (c) addAssign(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
+  }
+
+  if (mode === 'REPAIR') currentSchedules.forEach(loadExisting);
+  fixedSchedules.forEach(loadExisting);
+
+  // Build teacher unavailability
+  for (const a of availabilities) {
+    if (!a.isAvailable) {
+      if (!teacherUnavailable.has(a.teacherId)) teacherUnavailable.set(a.teacherId, new Map());
+      const dm = teacherUnavailable.get(a.teacherId)!;
+      if (!dm.has(a.dayOfWeek)) dm.set(a.dayOfWeek, new Set());
+      dm.get(a.dayOfWeek)!.add(a.period);
     }
   }
 
-  // 3. Current assignments state
-  const assignments: any[] = [];
-  if (mode === 'REPAIR') {
-    currentSchedules.forEach(s => assignments.push(s));
+  // Build toSchedule
+  const toSchedule: { classId: string; subjectId: string; teacherId: string | null; shift: string; level: string }[] = [];
+  for (const curr of curriculums) {
+    let already = 0;
+    if (mode === 'REPAIR') already = currentSchedules.filter(s => s.classId === curr.classId && s.subjectId === curr.subjectId).length;
+    const needed = curr.classesPerWeek - already;
+    for (let i = 0; i < needed; i++) {
+      toSchedule.push({ classId: curr.classId, subjectId: curr.subjectId, teacherId: curr.teacherId, shift: curr.class.shift, level: curr.class.level });
+    }
   }
-  fixedSchedules.forEach(s => assignments.push(s));
-  
+
+  // Sort: most constrained teachers first
+  const teacherLoads = new Map<string, number>();
+  for (const t of toSchedule) { if (t.teacherId) teacherLoads.set(t.teacherId, (teacherLoads.get(t.teacherId) || 0) + 1); }
+  toSchedule.sort((a, b) => (teacherLoads.get(b.teacherId || '') || 0) - (teacherLoads.get(a.teacherId || '') || 0));
+
   const days = [1, 2, 3, 4, 5];
   const periods = [1, 2, 3, 4, 5, 6];
 
-  function getPeriods(shift: string) {
-    return periods;
-  }
+  function isValid(tid: string | null, cid: string, day: number, period: number, shift: string, level: string): boolean {
+    const dp = denorm(period, shift);
 
-  function normalizePeriod(period: number, shift: string): number {
-    if (shift === 'AFTERNOON' && period > 6) return period - 6;
-    return period;
-  }
+    if (classOccupied.get(cid)?.has(`${day}-${dp}`)) return false;
+    if ((classDayCount.get(cid)?.get(day) || 0) >= MAX_PERIODS_PER_DAY) return false;
 
-  function denormalizePeriod(period: number, shift: string): number {
-    if (shift === 'AFTERNOON') return period + 6;
-    return period;
-  }
+    const sMap = classSubjectDayCount.get(cid)?.get(toSchedule[curIdx]?.subjectId);
+    if (sMap && (sMap.get(day) || 0) >= 2) return false;
 
-  function isValid(teacherId: string | null, classId: string, day: number, period: number, level: string, shift: string) {
-    // Check class conflict (use denormalized period for comparison with existing assignments)
-    const denormPeriod = denormalizePeriod(period, shift);
-    if (assignments.some(a => a.classId === classId && a.dayOfWeek === day && a.period === denormPeriod)) {
-      return false;
-    }
+    if (!tid) return true;
+    if (teacherUnavailable.get(tid)?.get(day)?.has(dp)) return false;
 
-    if (!teacherId) return true;
+    const np = norm(dp, shift);
+    if (teacherDayPeriods.get(tid)?.get(day)?.has(np)) return false;
 
-    // Check teacher availability restriction (availability uses denormalized periods 1-12)
-    const isUnavail = availabilities.some(a => a.teacherId === teacherId && a.dayOfWeek === day && a.period === denormPeriod && !a.isAvailable);
-    if (isUnavail) return false;
-
-    // Check teacher time overlap - use normalized period for TimeSlot lookup
-    const normPeriod = normalizePeriod(period, shift);
-    const mySlot = timeSlots.find((ts: any) => ts.level === level && ts.shift === shift && ts.dayOfWeek === day && ts.period === normPeriod);
+    const mySlot = slotLookup.get(`${level}-${shift}-${day}-${period}`);
     if (!mySlot) return true;
 
-    const teacherAssignments = assignments.filter(a => a.teacherId === teacherId && a.dayOfWeek === day);
-    for (const ta of teacherAssignments) {
-      const taClass = classes.find(c => c.id === ta.classId);
-      if (!taClass) continue;
-      const taNormPeriod = normalizePeriod(ta.period, taClass.shift);
-      const taSlot = timeSlots.find((ts: any) => ts.level === taClass.level && ts.shift === taClass.shift && ts.dayOfWeek === day && ts.period === taNormPeriod);
-      if (taSlot) {
-        if (doTimeSlotsOverlap(mySlot, taSlot)) {
-          return false;
+    const tPeriods = teacherDayPeriods.get(tid)?.get(day);
+    if (!tPeriods || tPeriods.size === 0) return true;
+
+    for (const taNP of tPeriods) {
+      let taSlot = slotLookup.get(`${level}-MORNING-${day}-${taNP}`) || slotLookup.get(`${level}-AFTERNOON-${day}-${taNP}`);
+      if (!taSlot) {
+        for (const lv of ['INFANTIL', 'FUND1', 'FUND2']) {
+          if (lv === level) continue;
+          taSlot = slotLookup.get(`${lv}-MORNING-${day}-${taNP}`) || slotLookup.get(`${lv}-AFTERNOON-${day}-${taNP}`);
+          if (taSlot) break;
         }
-      } else {
-        if (ta.period === denormPeriod) return false;
       }
+      if (taSlot && doTimeSlotsOverlap(mySlot, taSlot)) return false;
     }
 
     return true;
   }
 
-  // Pre-compute teacher loads for sorting
-  const teacherLoads = new Map<string, number>();
-  for (const item of toSchedule) {
-    if (item.teacherId) {
-      teacherLoads.set(item.teacherId, (teacherLoads.get(item.teacherId) || 0) + 1);
-    }
-  }
-
-  // Sort `toSchedule`: most constrained first (teacher with most classes, then classes with most subjects)
-  const classLoads = new Map<string, number>();
-  for (const item of toSchedule) {
-    classLoads.set(item.classId, (classLoads.get(item.classId) || 0) + 1);
-  }
-
-  toSchedule.sort((a, b) => {
-    const aTeacherLoad = a.teacherId ? teacherLoads.get(a.teacherId) || 0 : 0;
-    const bTeacherLoad = b.teacherId ? teacherLoads.get(b.teacherId) || 0 : 0;
-    if (aTeacherLoad !== bTeacherLoad) return bTeacherLoad - aTeacherLoad;
-    const aClassLoad = classLoads.get(a.classId) || 0;
-    const bClassLoad = classLoads.get(b.classId) || 0;
-    return bClassLoad - aClassLoad;
-  });
-
+  let curIdx = 0;
   let nodesExplored = 0;
-  const MAX_NODES = 500000; // Increased limit
-  let bestAssignments: any[] = [];
-  let bestAssigned = 0;
+  const MAX_NODES = 200000;
+  const savedAssignments: { classId: string; subjectId: string; teacherId: string | null; dayOfWeek: number; period: number }[] = [];
 
   function backtrack(index: number): boolean {
-    if (index === toSchedule.length) return true; // All scheduled
+    if (index === toSchedule.length) return true;
     if (nodesExplored++ > MAX_NODES) return false;
 
-    // Track best partial solution
-    const currentAssigned = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-')).length;
-    if (currentAssigned > bestAssigned) {
-      bestAssigned = currentAssigned;
-      bestAssignments = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-')).map(a => ({...a}));
-    }
-
+    curIdx = index;
     const curr = toSchedule[index];
-    const periodsList = getPeriods(curr.shift);
+    const existingDays = classSubjectDayCount.get(curr.classId)?.get(curr.subjectId);
 
-    // Heuristic: try to group same subject on same day (double classes)
-    const existingDays = assignments
-      .filter(a => a.classId === curr.classId && a.subjectId === curr.subjectId)
-      .map(a => a.dayOfWeek);
-    
-    // Day order: prefer days that already have this subject (for double classes), then spread
-    const sortedDays = [...days].sort((a, b) => {
-      const aHas = existingDays.includes(a);
-      const bHas = existingDays.includes(b);
-      if (aHas && !bHas) return -1;
-      if (!aHas && bHas) return 1;
-      // Secondary: prefer days with fewer total classes for this class (spread load)
-      const aCount = assignments.filter(x => x.classId === curr.classId && x.dayOfWeek === a).length;
-      const bCount = assignments.filter(x => x.classId === curr.classId && x.dayOfWeek === b).length;
-      return aCount - bCount;
-    });
-
-    // Period order: sequential (1,2,3...) to pack schedule
-    for (const day of sortedDays) {
-      for (const period of periodsList) {
-        if (isValid(curr.teacherId, curr.classId, day, period, curr.level, curr.shift)) {
-          // Check max 2 classes of same subject per day
-          const classesThisDay = assignments.filter(a => a.classId === curr.classId && a.subjectId === curr.subjectId && a.dayOfWeek === day).length;
-          if (classesThisDay >= 2) continue;
-
-          // Make assignment
-          const denormPeriod = denormalizePeriod(period, curr.shift);
-          const newAssignment = {
-            id: 'temp-' + nodesExplored,
-            classId: curr.classId,
-            subjectId: curr.subjectId,
-            teacherId: curr.teacherId,
-            dayOfWeek: day,
-            period: denormPeriod,
-            isFixed: false
-          };
-          assignments.push(newAssignment);
-
-          if (backtrack(index + 1)) return true;
-
-          // Undo assignment
-          assignments.pop();
+    // Build candidate slots
+    const candidates: { day: number; period: number }[] = [];
+    for (const day of days) {
+      if ((classDayCount.get(curr.classId)?.get(day) || 0) >= MAX_PERIODS_PER_DAY) continue;
+      for (const period of periods) {
+        if (isValid(curr.teacherId, curr.classId, day, period, curr.shift, curr.level)) {
+          candidates.push({ day, period });
         }
       }
     }
 
-    return false; // Backtrack
+    // Sort: prefer grouping same subject, then less occupied days
+    candidates.sort((a, b) => {
+      const aH = existingDays?.has(a.day) ? 1 : 0;
+      const bH = existingDays?.has(b.day) ? 1 : 0;
+      if (aH !== bH) return bH - aH;
+      return (classDayCount.get(curr.classId)?.get(a.day) || 0) - (classDayCount.get(curr.classId)?.get(b.day) || 0);
+    });
+
+    for (const { day, period } of candidates) {
+      const sMap = classSubjectDayCount.get(curr.classId)?.get(curr.subjectId);
+      if (sMap && (sMap.get(day) || 0) >= 2) continue;
+
+      const dp = denorm(period, curr.shift);
+      addAssign(curr.classId, curr.subjectId, curr.teacherId, day, dp, curr.shift);
+      savedAssignments[index] = { classId: curr.classId, subjectId: curr.subjectId, teacherId: curr.teacherId, dayOfWeek: day, period: dp };
+
+      if (backtrack(index + 1)) return true;
+
+      removeAssign(curr.classId, curr.subjectId, curr.teacherId, day, dp, curr.shift);
+    }
+
+    return false;
   }
 
   const success = backtrack(0);
 
-  // If backtracking failed or timed out, use best partial solution
-  let finalAssignments = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-'));
-  if (!success && bestAssignments.length > finalAssignments.length) {
-    finalAssignments = bestAssignments;
-  }
+  // Filter out original assignments (fixed + current in REPAIR)
+  const originalSet = new Set<string>();
+  for (const s of fixedSchedules) originalSet.add(`${s.classId}-${s.dayOfWeek}-${s.period}`);
+  if (mode === 'REPAIR') for (const s of currentSchedules) originalSet.add(`${s.classId}-${s.dayOfWeek}-${s.period}`);
 
-  // 4. Save to DB
-  if (finalAssignments.length > 0) {
+  const newAssignments = savedAssignments
+    .filter((a, i) => i < toSchedule.length && a && !originalSet.has(`${a.classId}-${a.dayOfWeek}-${a.period}`));
+
+  if (newAssignments.length > 0) {
     await prisma.schedule.createMany({
-      data: finalAssignments.map(a => ({
+      data: newAssignments.map(a => ({
         classId: a.classId,
         subjectId: a.subjectId,
         teacherId: a.teacherId,
         dayOfWeek: a.dayOfWeek,
         period: a.period,
-        isFixed: false
-      }))
+        isFixed: false,
+      })),
     });
   }
 
-  return { 
-    success: success || finalAssignments.length > 0, 
-    assigned: finalAssignments.length, 
-    total: toSchedule.length, 
-    timeout: nodesExplored > MAX_NODES 
+  return {
+    success: success || newAssignments.length > 0,
+    assigned: newAssignments.length,
+    total: toSchedule.length,
+    timeout: nodesExplored > MAX_NODES,
   };
 }
