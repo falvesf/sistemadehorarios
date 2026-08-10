@@ -23,9 +23,19 @@ export default async function RestricoesPage() {
     orderBy: [{ level: 'asc' }, { shift: 'asc' }, { dayOfWeek: 'asc' }, { period: 'asc' }]
   });
 
+  const subjectAliases = await prisma.subjectAlias.findMany({
+    orderBy: { sourceName: 'asc' }
+  });
+
   return (
     <div className={styles.container}>
-      <RestricoesClient teachers={teachers} classes={classes} capelaRules={capelaRules} initialTimeSlots={timeSlots} />
+      <RestricoesClient
+        teachers={teachers}
+        classes={classes}
+        capelaRules={capelaRules}
+        initialTimeSlots={timeSlots}
+        initialSubjectAliases={subjectAliases}
+      />
     </div>
   );
 }

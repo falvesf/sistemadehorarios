@@ -26,6 +26,7 @@ export default function RootLayout({
             <nav className={styles.nav}>
               <Link href="/" className={styles.navLink}>Dashboard</Link>
               <Link href="/professores" className={styles.navLink}>Professores</Link>
+              <Link href="/disciplinas" className={styles.navLink}>Disciplinas</Link>
               <Link href="/turmas" className={styles.navLink}>Turmas & Grade</Link>
               <Link href="/restricoes" className={styles.navLink}>Regras e Capela</Link>
               <Link href="/gerador" className={styles.navLink}>Motor Gerador</Link>

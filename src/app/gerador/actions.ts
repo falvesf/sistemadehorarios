@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 
 import { runGenerator } from './engine';
+import * as XLSX from 'xlsx';
 
 export async function fetchCurrentSchedule() {
   const schedules = await prisma.schedule.findMany({
@@ -217,8 +218,101 @@ export async function importSchedule(jsonText: string) {
   }
 }
 
-export async function restoreDefaultSchedule() {
+export async function restoreDefaultSchedule(templateId?: string) {
   try {
+    // If templateId is provided, use that template
+    if (templateId) {
+      const template = await prisma.scheduleTemplate.findUnique({
+        where: { id: templateId },
+        include: { entries: true },
+      });
+
+      if (!template) {
+        return { success: false, error: 'Modelo não encontrado.' };
+      }
+
+      // Load subject aliases (e.g., "Cultura Geral" -> "Capela")
+      const aliases = await prisma.subjectAlias.findMany();
+      const aliasMap = new Map<string, string>();
+      for (const a of aliases) {
+        aliasMap.set(a.sourceName.toLowerCase(), a.targetName);
+      }
+
+      // Clear ALL current schedules (including fixed) before restoring from template
+      await prisma.schedule.deleteMany({});
+
+      // Get or create subjects, teachers, classes from template entries
+      const teachersMap = new Map<string, string>();
+      const subjectsMap = new Map<string, string>();
+      const classesMap = new Map<string, string>();
+
+      let created = 0;
+      for (const entry of template.entries) {
+        // Apply subject alias: resolve the actual subject name
+        const aliasTarget = aliasMap.get(entry.subjectName.toLowerCase());
+        const resolvedSubjectName = aliasTarget || entry.subjectName;
+        const isFixed = entry.isFixed || !!aliasTarget; // aliased subjects become fixed
+
+        // Get or create subject using resolved name
+        if (!subjectsMap.has(resolvedSubjectName)) {
+          let subject = await prisma.subject.findFirst({ where: { name: resolvedSubjectName } });
+          if (!subject) {
+            subject = await prisma.subject.create({ data: { name: resolvedSubjectName } });
+          }
+          subjectsMap.set(resolvedSubjectName, subject.id);
+        }
+        const subjectId = subjectsMap.get(resolvedSubjectName)!;
+
+        // Get or create class
+        if (!classesMap.has(entry.className)) {
+          let cls = await prisma.class.findFirst({ where: { name: entry.className } });
+          if (!cls) {
+            const shift = inferShift(entry.className);
+            const level = inferLevel(entry.className);
+            cls = await prisma.class.create({ data: { name: entry.className, shift, level } });
+          }
+          classesMap.set(entry.className, cls.id);
+        }
+        const classId = classesMap.get(entry.className)!;
+
+        // Get or create teacher
+        let teacherId = null;
+        if (entry.teacherName) {
+          if (!teachersMap.has(entry.teacherName)) {
+            let teacher = await prisma.teacher.findFirst({ where: { name: entry.teacherName } });
+            if (!teacher) {
+              teacher = await prisma.teacher.create({ data: { name: entry.teacherName, type: 'AULISTA' } });
+            }
+            teachersMap.set(entry.teacherName, teacher.id);
+          }
+          teacherId = teachersMap.get(entry.teacherName)!;
+        }
+
+        // Create schedule entry
+        const classObj = await prisma.class.findUnique({ where: { id: classId } });
+        const shift = classObj?.shift || 'MORNING';
+        const dbPeriod = shift === 'AFTERNOON' ? entry.period + 6 : entry.period;
+
+        await prisma.schedule.create({
+          data: {
+            classId,
+            subjectId,
+            teacherId,
+            dayOfWeek: entry.dayOfWeek,
+            period: dbPeriod,
+            isFixed,
+          }
+        });
+        created++;
+      }
+
+      revalidatePath('/gerador');
+      revalidatePath('/turmas');
+      revalidatePath('/restricoes');
+      return { success: true, created, templateName: template.name };
+    }
+
+    // No templateId provided - fallback to original behavior (create empty schedules from curriculum)
     await prisma.schedule.deleteMany({ where: { isFixed: false } });
 
     const curriculums = await prisma.curriculum.findMany({ include: { class: true } });
@@ -243,6 +337,148 @@ export async function restoreDefaultSchedule() {
     revalidatePath('/gerador');
     revalidatePath('/turmas');
     return { success: true, created };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+function inferShift(className: string): string {
+  const name = className.toLowerCase();
+  if (name.includes('b') && (name.includes('4') || name.includes('5') || name.includes('6'))) return 'AFTERNOON';
+  if (name.includes('tarde')) return 'AFTERNOON';
+  return 'MORNING';
+}
+
+function inferLevel(className: string): string {
+  const name = className.toLowerCase();
+  if (name.includes('maternal') || name.includes('jardim') || name.includes('pré')) return 'INFANTIL';
+  if (name.includes('1º') || name.includes('2º') || name.includes('3º') || name.includes('4º') || name.includes('5º')) return 'FUND1';
+  if (name.includes('6º') || name.includes('7º') || name.includes('8º') || name.includes('9º')) return 'FUND2';
+  return 'FUND1';
+}
+
+export async function hasTemplates(): Promise<boolean> {
+  const count = await prisma.scheduleTemplate.count();
+  return count > 0;
+}
+
+export async function getTemplates() {
+  return await prisma.scheduleTemplate.findMany({
+    include: { _count: { select: { entries: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+export async function importTemplateFromExcel(base64Data: string, fileName: string) {
+  try {
+    const buffer = Buffer.from(base64Data, 'base64');
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+
+    // Create template
+    const template = await prisma.scheduleTemplate.create({
+      data: { name: fileName.replace(/\.xlsx?$/i, '') },
+    });
+
+    let totalEntries = 0;
+
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+
+      if (data.length < 6) continue;
+
+      // The class name is the sheet name
+      const className = sheetName.trim();
+
+      // Try to extract regente from row 1 or row 2
+      let regenteName: string | null = null;
+      for (const rowIdx of [1, 2]) {
+        const infoRow = data[rowIdx];
+        if (!infoRow) continue;
+        for (const col of infoRow) {
+          if (col && col.toString().toLowerCase().includes('professor')) {
+            const match = col.toString().match(/professor[a-z]*:\s*(.+)/i);
+            if (match) regenteName = match[1].trim();
+          }
+        }
+      }
+
+      // Read schedule grid starting from row 6 (data rows)
+      // Structure: row[0]=null, row[1]="1ª", row[2..6]=Mon-Fri subjects
+      let periodIndex = 1;
+      for (let i = 6; i < data.length; i++) {
+        const row = data[i];
+        if (!row || row.length === 0) continue;
+
+        // Period indicator is in column 1 (e.g., "1ª", "2ª")
+        const periodCell = (row[1] || '').toString().trim().toUpperCase();
+
+        // Skip INTERVALO, legend rows, etc.
+        if (periodCell.includes('INTERVALO')) continue;
+        if (periodCell.includes('ATUALIZADO')) continue;
+        if (periodCell === '' || periodCell === 'AULA') continue;
+
+        // Check if it looks like a period (contains "ª")
+        if (!periodCell.includes('ª')) continue;
+
+        // Days are in columns 2-6 (Segunda=2, Terça=3, Quarta=4, Quinta=5, Sexta=6)
+        for (let dayIndex = 0; dayIndex < 5; dayIndex++) {
+          const cellData = row[dayIndex + 2]; // columns 2..6
+          if (!cellData) continue;
+
+          let subjectName = cellData.toString().trim();
+          let teacherName = regenteName;
+          let isAulista = false;
+
+          // Parse "Subject\n(teacher name)" format
+          if (subjectName.includes('\n')) {
+            const parts = subjectName.split('\n');
+            subjectName = parts[0].trim();
+            if (parts[1]) {
+              let rawTeacher = parts[1].trim();
+              if (rawTeacher.startsWith('(')) rawTeacher = rawTeacher.replace(/\(/g, '').replace(/\)/g, '');
+              rawTeacher = rawTeacher.replace(/profº\s*/gi, '').replace(/profª\s*/gi, '').replace(/prof\.\s*/gi, '').trim();
+              teacherName = rawTeacher;
+              isAulista = true;
+            }
+          }
+
+          // Skip empty subjects
+          if (!subjectName || subjectName === '') continue;
+
+          const isFixed = subjectName.toLowerCase().includes('capela');
+
+          await prisma.scheduleTemplateEntry.create({
+            data: {
+              templateId: template.id,
+              className,
+              subjectName,
+              teacherName: teacherName || null,
+              dayOfWeek: dayIndex + 1, // 1=Mon..5=Fri
+              period: periodIndex,
+              isFixed,
+            }
+          });
+          totalEntries++;
+        }
+        periodIndex++;
+      }
+    }
+
+    revalidatePath('/gerador');
+    return { success: true, templateId: template.id, totalEntries };
+  } catch (e: any) {
+    console.error('Template import error:', e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deleteTemplate(templateId: string) {
+  try {
+    await prisma.scheduleTemplate.delete({ where: { id: templateId } });
+    revalidatePath('/gerador');
+    return { success: true };
   } catch (e: any) {
     console.error(e);
     return { success: false, error: e.message };

@@ -1,6 +1,6 @@
 import styles from '../professores/professores.module.css';
 import GeradorClient from './GeradorClient';
-import { fetchCurrentSchedule, fetchSubjects, fetchClasses } from './actions';
+import { fetchCurrentSchedule, fetchSubjects, fetchClasses, getTemplates } from './actions';
 import prisma from '@/lib/prisma';
 
 export default async function GeradorPage() {
@@ -10,6 +10,13 @@ export default async function GeradorPage() {
     fetchSubjects(),
     fetchClasses(),
   ]);
+
+  let templates: any[] = [];
+  try {
+    templates = await getTemplates();
+  } catch {
+    templates = [];
+  }
 
   const timeSlots = await prisma.timeSlot.findMany({
     orderBy: [{ level: 'asc' }, { shift: 'asc' }, { dayOfWeek: 'asc' }, { period: 'asc' }]
@@ -30,6 +37,7 @@ export default async function GeradorPage() {
         timeSlots={timeSlots}
         subjects={subjects}
         classes={classes}
+        templates={templates}
       />
     </div>
   );

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { updateTeacher, createTeacher, deleteTeacher } from '../actions';
 import { getTeacherAvailability, saveTeacherAvailability } from '../restricoes/actions';
 import styles from './professores.module.css';
@@ -61,6 +62,7 @@ export default function ProfessoresClient({
     oldName: '',
     newName: '',
   });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // ── Availability states ──────────────────────────────────────
   const [grid, setGrid] = useState<AvailabilitySlot[]>([]);
@@ -200,7 +202,12 @@ export default function ProfessoresClient({
 
   const handleDelete = async () => {
     if (!editingTeacher) return;
-    if (!confirm(`Tem certeza que deseja excluir o(a) professor(a) ${editingTeacher.name}? As matérias dele(a) ficarão "Sem Professor".`)) return;
+    setDeleteConfirmOpen(true);
+  };
+
+  const executeDelete = async () => {
+    if (!editingTeacher) return;
+    setDeleteConfirmOpen(false);
     setIsSaving(true);
     try {
       const res = await deleteTeacher(editingTeacher.id);
@@ -496,6 +503,16 @@ export default function ProfessoresClient({
           </button>
         </div>
       </Modal>
+
+      <ConfirmModal
+        isOpen={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        onConfirm={executeDelete}
+        title="Excluir Professor"
+        message={`Tem certeza que deseja excluir o(a) professor(a) ${editingTeacher?.name}? As matérias dele(a) ficarão "Sem Professor".`}
+        confirmLabel="Excluir"
+        variant="danger"
+      />
     </>
   );
 }

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { updateCurriculum, deleteClass, updateClass } from '../actions';
 import styles from '../professores/professores.module.css';
 
@@ -39,6 +40,9 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
   // Local state for the curriculum being edited to allow bulk save
   const [localCurriculums, setLocalCurriculums] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Confirm dialog
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const handleEditClick = (turma: Turma) => {
     setEditingTurma(turma);
@@ -88,8 +92,12 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
 
   const handleDeleteClass = async () => {
     if (!editingTurma) return;
-    if (!confirm(`Tem certeza que deseja apagar a turma ${editingTurma.name} inteira do sistema? Isso apagará toda a grade curricular e horários associados a ela e não pode ser desfeito.`)) return;
+    setConfirmOpen(true);
+  };
 
+  const executeDeleteClass = async () => {
+    if (!editingTurma) return;
+    setConfirmOpen(false);
     setIsSaving(true);
     try {
       const res = await deleteClass(editingTurma.id);
@@ -225,6 +233,16 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
           </div>
         </div>
       </Modal>
+
+      <ConfirmModal
+        isOpen={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={executeDeleteClass}
+        title="Excluir Turma"
+        message={`Tem certeza que deseja apagar a turma ${editingTurma?.name} inteira do sistema? Isso apagará toda a grade curricular e horários associados a ela e não pode ser desfeito.`}
+        confirmLabel="Excluir"
+        variant="danger"
+      />
     </>
   );
 }

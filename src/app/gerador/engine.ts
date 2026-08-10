@@ -31,65 +31,77 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
 
     const slotLookup = new Map<string, { startTime: string; endTime: string }>();
     for (const ts of timeSlots) {
-      slotLookup.set(`${ts.level}-${ts.shift}-${ts.dayOfWeek}-${ts.period}`, ts);
+      slotLookup.set(ts.level + '-' + ts.shift + '-' + ts.dayOfWeek + '-' + ts.period, ts);
     }
 
-    const classOccupied = new Map<string, Set<string>>();
-    const teacherDayPeriods = new Map<string, Map<number, Set<number>>>();
-    const teacherUnavailable = new Map<string, Map<number, Set<number>>>();
+    // Lookup sets for O(1) checks
+    const occupied = new Set<string>();
+    const teacherOccupied = new Set<string>();
+    const teacherUnavail = new Set<string>();
     const classDayCount = new Map<string, Map<number, number>>();
     const classSubjectDayCount = new Map<string, Map<string, Map<number, number>>>();
+    const teacherDaySlots = new Map<string, Map<number, { startTime: string; endTime: string }[]>>();
 
-    function norm(p: number, shift: string) { return shift === 'AFTERNOON' && p > 6 ? p - 6 : p; }
-    function denorm(p: number, shift: string) { return shift === 'AFTERNOON' ? p + 6 : p; }
+    const np = (p: number, shift: string) => shift === 'AFTERNOON' && p > 6 ? p - 6 : p;
+    const dp = (p: number, shift: string) => shift === 'AFTERNOON' ? p + 6 : p;
 
-    function addAssign(cid: string, sid: string, tid: string | null, day: number, dp: number, shift: string) {
-      if (!classOccupied.has(cid)) classOccupied.set(cid, new Set());
-      classOccupied.get(cid)!.add(`${day}-${dp}`);
-
+    const placeOnGrid = (cid: string, sid: string, tid: string | null, day: number, denormP: number, shift: string) => {
+      occupied.add(cid + '-' + day + '-' + denormP);
       if (tid) {
-        if (!teacherDayPeriods.has(tid)) teacherDayPeriods.set(tid, new Map());
-        const dm = teacherDayPeriods.get(tid)!;
-        if (!dm.has(day)) dm.set(day, new Set());
-        dm.get(day)!.add(norm(dp, shift));
+        const normalizedP = np(denormP, shift);
+        teacherOccupied.add(tid + '-' + day + '-' + normalizedP);
+        if (!teacherDaySlots.has(tid)) teacherDaySlots.set(tid, new Map());
+        const dm = teacherDaySlots.get(tid)!;
+        if (!dm.has(day)) dm.set(day, []);
+        const level = classMap.get(cid)?.level || 'FUND2';
+        const slot = slotLookup.get(level + '-' + shift + '-' + day + '-' + normalizedP);
+        if (slot) dm.get(day)!.push(slot);
       }
-
       if (!classDayCount.has(cid)) classDayCount.set(cid, new Map());
       const dc = classDayCount.get(cid)!;
       dc.set(day, (dc.get(day) || 0) + 1);
-
       if (!classSubjectDayCount.has(cid)) classSubjectDayCount.set(cid, new Map());
       const csm = classSubjectDayCount.get(cid)!;
       if (!csm.has(sid)) csm.set(sid, new Map());
       csm.get(sid)!.set(day, (csm.get(sid)!.get(day) || 0) + 1);
     }
 
-    function removeAssign(cid: string, sid: string, tid: string | null, day: number, dp: number, shift: string) {
-      classOccupied.get(cid)?.delete(`${day}-${dp}`);
-      if (tid) teacherDayPeriods.get(tid)?.get(day)?.delete(norm(dp, shift));
-
-      const dc = classDayCount.get(cid);
-      if (dc) { const p = dc.get(day) || 0; p <= 1 ? dc.delete(day) : dc.set(day, p - 1); }
-
-      const csm = classSubjectDayCount.get(cid)?.get(sid);
-      if (csm) { const p = csm.get(day) || 0; p <= 1 ? csm.delete(day) : csm.set(day, p - 1); }
-    }
-
-    function loadExisting(s: any) {
-      const c = classMap.get(s.classId);
-      if (c) addAssign(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
-    }
-
-    if (mode === 'REPAIR') currentSchedules.forEach(loadExisting);
-    fixedSchedules.forEach(loadExisting);
-
-    for (const a of availabilities) {
-      if (!a.isAvailable) {
-        if (!teacherUnavailable.has(a.teacherId)) teacherUnavailable.set(a.teacherId, new Map());
-        const dm = teacherUnavailable.get(a.teacherId)!;
-        if (!dm.has(a.dayOfWeek)) dm.set(a.dayOfWeek, new Set());
-        dm.get(a.dayOfWeek)!.add(a.period);
+    const canPlace = (cid: string, sid: string, tid: string | null, day: number, period: number, shift: string, level: string): boolean => {
+      const denormP = dp(period, shift);
+      if (occupied.has(cid + '-' + day + '-' + denormP)) return false;
+      if ((classDayCount.get(cid)?.get(day) || 0) >= maxPeriods(level)) return false;
+      if ((classSubjectDayCount.get(cid)?.get(sid)?.get(day) || 0) >= 2) return false;
+      if (!tid) return true;
+      if (teacherUnavail.has(tid + '-' + day + '-' + denormP)) return false;
+      const normalizedP = np(denormP, shift);
+      if (teacherOccupied.has(tid + '-' + day + '-' + normalizedP)) return false;
+      const mySlot = slotLookup.get(level + '-' + shift + '-' + day + '-' + period);
+      if (!mySlot) return true;
+      const tSlots = teacherDaySlots.get(tid)?.get(day);
+      if (!tSlots || tSlots.length === 0) return true;
+      for (const ts of tSlots) {
+        if (doTimeSlotsOverlap(mySlot, ts)) return false;
       }
+      return true;
+    }
+
+    // Priority 1: Load fixed schedules (capela)
+    for (const s of fixedSchedules) {
+      const c = classMap.get(s.classId);
+      if (c) placeOnGrid(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
+    }
+
+    // Priority 2: Load current schedules in REPAIR mode
+    if (mode === 'REPAIR') {
+      for (const s of currentSchedules) {
+        const c = classMap.get(s.classId);
+        if (c) placeOnGrid(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
+      }
+    }
+
+    // Teacher unavailability
+    for (const a of availabilities) {
+      if (!a.isAvailable) teacherUnavail.add(a.teacherId + '-' + a.dayOfWeek + '-' + a.period);
     }
 
     // Build toSchedule
@@ -111,64 +123,23 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     const days = [1, 2, 3, 4, 5];
     const periods = [1, 2, 3, 4, 5, 6];
 
-    function isValid(tid: string | null, cid: string, day: number, period: number, shift: string, level: string): boolean {
-      const dp = denorm(period, shift);
-      if (classOccupied.get(cid)?.has(`${day}-${dp}`)) return false;
-      if ((classDayCount.get(cid)?.get(day) || 0) >= maxPeriods(level)) return false;
+    // Greedy placement: place each item in first valid slot
+    const newAssignments: { classId: string; subjectId: string; teacherId: string | null; dayOfWeek: number; period: number }[] = [];
 
-      const sMap = classSubjectDayCount.get(cid)?.get(toSchedule[curIdx]?.subjectId);
-      if (sMap && (sMap.get(day) || 0) >= 2) return false;
-
-      if (!tid) return true;
-      if (teacherUnavailable.get(tid)?.get(day)?.has(dp)) return false;
-
-      const np = norm(dp, shift);
-      if (teacherDayPeriods.get(tid)?.get(day)?.has(np)) return false;
-
-      const mySlot = slotLookup.get(`${level}-${shift}-${day}-${period}`);
-      if (!mySlot) return true;
-
-      const tPeriods = teacherDayPeriods.get(tid)?.get(day);
-      if (!tPeriods || tPeriods.size === 0) return true;
-
-      for (const taNP of tPeriods) {
-        let taSlot = slotLookup.get(`${level}-MORNING-${day}-${taNP}`) || slotLookup.get(`${level}-AFTERNOON-${day}-${taNP}`);
-        if (!taSlot) {
-          for (const lv of ['INFANTIL', 'FUND1', 'FUND2']) {
-            if (lv === level) continue;
-            taSlot = slotLookup.get(`${lv}-MORNING-${day}-${taNP}`) || slotLookup.get(`${lv}-AFTERNOON-${day}-${taNP}`);
-            if (taSlot) break;
-          }
-        }
-        if (taSlot && doTimeSlotsOverlap(mySlot, taSlot)) return false;
-      }
-
-      return true;
-    }
-
-    let curIdx = 0;
-    let nodesExplored = 0;
-    const MAX_NODES = 200000;
-    const placedAssignments: { classId: string; subjectId: string; teacherId: string | null; dayOfWeek: number; period: number }[] = new Array(toSchedule.length);
-
-    function backtrack(index: number): boolean {
-      if (index === toSchedule.length) return true;
-      if (nodesExplored++ > MAX_NODES) return false;
-
-      curIdx = index;
-      const curr = toSchedule[index];
+    for (const curr of toSchedule) {
       const existingDays = classSubjectDayCount.get(curr.classId)?.get(curr.subjectId);
-
       const candidates: { day: number; period: number }[] = [];
+
       for (const day of days) {
         if ((classDayCount.get(curr.classId)?.get(day) || 0) >= maxPeriods(curr.level)) continue;
         for (const period of periods) {
-          if (isValid(curr.teacherId, curr.classId, day, period, curr.shift, curr.level)) {
+          if (canPlace(curr.classId, curr.subjectId, curr.teacherId, day, period, curr.shift, curr.level)) {
             candidates.push({ day, period });
           }
         }
       }
 
+      // Prefer grouping same subject on same day, then least occupied
       candidates.sort((a, b) => {
         const aH = existingDays?.has(a.day) ? 1 : 0;
         const bH = existingDays?.has(b.day) ? 1 : 0;
@@ -176,38 +147,24 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
         return (classDayCount.get(curr.classId)?.get(a.day) || 0) - (classDayCount.get(curr.classId)?.get(b.day) || 0);
       });
 
-      for (const { day, period } of candidates) {
-        const sMap = classSubjectDayCount.get(curr.classId)?.get(curr.subjectId);
-        if (sMap && (sMap.get(day) || 0) >= 2) continue;
-
-        const dp = denorm(period, curr.shift);
-        addAssign(curr.classId, curr.subjectId, curr.teacherId, day, dp, curr.shift);
-        placedAssignments[index] = { classId: curr.classId, subjectId: curr.subjectId, teacherId: curr.teacherId, dayOfWeek: day, period: dp };
-
-        if (backtrack(index + 1)) return true;
-
-        removeAssign(curr.classId, curr.subjectId, curr.teacherId, day, dp, curr.shift);
-        placedAssignments[index] = undefined as any;
+      if (candidates.length > 0) {
+        const best = candidates[0];
+        const denormP = dp(best.period, curr.shift);
+        placeOnGrid(curr.classId, curr.subjectId, curr.teacherId, best.day, denormP, curr.shift);
+        newAssignments.push({ classId: curr.classId, subjectId: curr.subjectId, teacherId: curr.teacherId, dayOfWeek: best.day, period: denormP });
       }
-
-      return false;
     }
-
-    const success = backtrack(0);
-
-    // Collect whatever was placed (works for both full and partial)
-    const finalPlaced = placedAssignments.filter((a): a is NonNullable<typeof a> => !!a);
 
     // Filter out originals
     const originalSet = new Set<string>();
-    for (const s of fixedSchedules) originalSet.add(`${s.classId}-${s.dayOfWeek}-${s.period}`);
-    if (mode === 'REPAIR') for (const s of currentSchedules) originalSet.add(`${s.classId}-${s.dayOfWeek}-${s.period}`);
+    for (const s of fixedSchedules) originalSet.add(s.classId + '-' + s.dayOfWeek + '-' + s.period);
+    if (mode === 'REPAIR') for (const s of currentSchedules) originalSet.add(s.classId + '-' + s.dayOfWeek + '-' + s.period);
 
-    const newAssignments = finalPlaced.filter(a => !originalSet.has(`${a.classId}-${a.dayOfWeek}-${a.period}`));
+    const toSave = newAssignments.filter(a => !originalSet.has(a.classId + '-' + a.dayOfWeek + '-' + a.period));
 
-    if (newAssignments.length > 0) {
+    if (toSave.length > 0) {
       await prisma.schedule.createMany({
-        data: newAssignments.map(a => ({
+        data: toSave.map(a => ({
           classId: a.classId,
           subjectId: a.subjectId,
           teacherId: a.teacherId,
@@ -219,10 +176,10 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     }
 
     return {
-      success: success || newAssignments.length > 0,
-      assigned: newAssignments.length,
+      success: toSave.length === toSchedule.length,
+      assigned: toSave.length,
       total: toSchedule.length,
-      timeout: nodesExplored > MAX_NODES,
+      timeout: false,
     };
 
   } catch (e: any) {

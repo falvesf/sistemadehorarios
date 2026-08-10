@@ -101,3 +101,51 @@ export async function saveTimeSlots(timeSlots: { id: string, startTime: string, 
     return { success: false, error: e.message };
   }
 }
+
+// ── Subject Aliases (e.g., "Cultura Geral" -> "Capela") ─────────
+
+export async function getSubjectAliases() {
+  return await prisma.subjectAlias.findMany({
+    orderBy: { sourceName: 'asc' }
+  });
+}
+
+export async function addSubjectAlias(sourceName: string, targetName: string) {
+  try {
+    if (!sourceName.trim() || !targetName.trim()) {
+      return { success: false, error: 'Preencha ambos os campos.' };
+    }
+
+    const existing = await prisma.subjectAlias.findUnique({
+      where: { sourceName: sourceName.trim() }
+    });
+    if (existing) {
+      return { success: false, error: `Já existe uma regra para "${sourceName}".` };
+    }
+
+    await prisma.subjectAlias.create({
+      data: {
+        sourceName: sourceName.trim(),
+        targetName: targetName.trim(),
+      }
+    });
+    revalidatePath('/restricoes');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deleteSubjectAlias(id: string) {
+  try {
+    await prisma.subjectAlias.delete({ where: { id } });
+    revalidatePath('/restricoes');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}

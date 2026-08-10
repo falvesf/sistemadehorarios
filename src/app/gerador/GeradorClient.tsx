@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
-import { generateSchedule, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule } from './actions';
+import { ConfirmModal } from '@/components/ConfirmModal';
+import { generateSchedule, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule, importTemplateFromExcel, deleteTemplate } from './actions';
 
 type ScheduleEntry = {
   id: string;
@@ -30,18 +31,27 @@ type TimeSlot = {
 
 type Subject = { id: string; name: string };
 
+type Template = {
+  id: string;
+  name: string;
+  createdAt: Date;
+  _count: { entries: number };
+};
+
 export default function GeradorClient({
   initialSchedules,
   teachers,
   timeSlots,
   subjects,
   classes,
+  templates,
 }: {
   initialSchedules: ScheduleEntry[];
   teachers: Teacher[];
   timeSlots: TimeSlot[];
   subjects: Subject[];
   classes: { id: string; name: string; level: string; shift: string }[];
+  templates: Template[];
 }) {
   const { showToast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -62,11 +72,30 @@ export default function GeradorClient({
   const [isExporting, setIsExporting] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
 
+  // Template states
+  const [currentTemplates, setCurrentTemplates] = useState<Template[]>(templates);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
+  const [isImportingTemplate, setIsImportingTemplate] = useState(false);
+
+  // Custom confirm dialog
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant: 'danger' | 'warning' | 'default';
+    confirmLabel: string;
+    action: 'deleteSlot' | 'restoreDefault' | 'deleteTemplate' | null;
+    payload?: any;
+  }>({ open: false, title: '', message: '', variant: 'default', confirmLabel: 'Confirmar', action: null });
+
   const router = useRouter();
 
   useEffect(() => {
     setSchedules(initialSchedules);
-  }, [initialSchedules]);
+    setCurrentTemplates(templates);
+  }, [initialSchedules, templates]);
 
   const handleGenerateClick = (selectedMode: 'REPAIR' | 'SCRATCH') => {
     setMode(selectedMode);
@@ -91,17 +120,18 @@ export default function GeradorClient({
     }
   };
 
-  const handleSlotClick = (slot: ScheduleEntry | null, classId: string, day: number, period: number, classLevel: string, classShift: string) => {
+  const handleSlotClick = (slot: ScheduleEntry | null, classId: string, day: number, displayPeriod: number, classLevel: string, classShift: string) => {
     if (slot) {
       setEditingSlot(slot);
       setSelectedTeacherId(slot.teacher?.id || '');
       setSelectedSubjectId(slot.subject.id);
     } else {
-      // Creating new slot - open modal with class/day/period pre-filled
+      // Denormalize period for AFTERNOON: display 1-6 -> DB 7-12
+      const dbPeriod = classShift === 'AFTERNOON' ? displayPeriod + 6 : displayPeriod;
       setEditingSlot({
-        id: `new-${classId}-${day}-${period}`,
+        id: `new-${classId}-${day}-${dbPeriod}`,
         dayOfWeek: day,
-        period: period,
+        period: dbPeriod,
         isFixed: false,
         class: classes.find(c => c.id === classId) || { name: '', level: classLevel, shift: classShift },
         subject: { id: '', name: '' },
@@ -145,7 +175,18 @@ export default function GeradorClient({
   };
 
   const handleDeleteSlot = async (slot: ScheduleEntry) => {
-    if (!confirm('Remover esta aula?')) return;
+    setConfirmState({
+      open: true,
+      title: 'Remover Aula',
+      message: `Remover a aula de ${slot.subject.name} (${slot.class.name})?`,
+      variant: 'danger',
+      confirmLabel: 'Remover',
+      action: 'deleteSlot',
+      payload: slot,
+    });
+  };
+
+  const executeDeleteSlot = async (slot: ScheduleEntry) => {
     try {
       const res = await deleteSlot(slot.id);
       if (res?.success) {
@@ -199,20 +240,88 @@ export default function GeradorClient({
   };
 
   const handleRestoreDefault = async () => {
-    if (!confirm('Restaurar grade padrão? Isso sobrescreverá a grade atual.')) return;
+    if (currentTemplates.length === 0) {
+      showToast('Nenhum modelo cadastrado. Importe um modelo Excel primeiro.', 'error');
+      return;
+    }
+
+    const templateId = selectedTemplateId || currentTemplates[0]?.id;
+    if (!templateId) return;
+
+    const template = currentTemplates.find(t => t.id === templateId);
+    setConfirmState({
+      open: true,
+      title: 'Restaurar Grade',
+      message: `Restaurar grade usando modelo "${template?.name}"? Isso sobrescreverá a grade atual.`,
+      variant: 'warning',
+      confirmLabel: 'Restaurar',
+      action: 'restoreDefault',
+      payload: templateId,
+    });
+  };
+
+  const executeRestoreDefault = async (templateId: string) => {
     setIsRestoring(true);
     try {
-      const res = await restoreDefaultSchedule();
+      const res = await restoreDefaultSchedule(templateId);
       if (res?.success) {
-        showToast('Grade padrão restaurada!', 'success');
+        showToast(res.templateName ? `Grade restaurada usando modelo "${res.templateName}"!` : 'Grade padrão restaurada!', 'success');
         router.refresh();
       } else {
-        showToast('Erro ao restaurar.', 'error');
+        showToast(res?.error || 'Erro ao restaurar.', 'error');
       }
     } catch {
       showToast('Erro interno.', 'error');
     } finally {
       setIsRestoring(false);
+    }
+  };
+
+  const handleImportTemplate = async () => {
+    if (!templateFile) { showToast('Selecione um arquivo.', 'error'); return; }
+    setIsImportingTemplate(true);
+    try {
+      const arrayBuffer = await templateFile.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      const res = await importTemplateFromExcel(base64, templateFile.name);
+      if (res?.success) {
+        showToast(`Modelo "${templateFile.name}" importado com sucesso! (${res.totalEntries} aulas)`, 'success');
+        setShowTemplateModal(false);
+        setTemplateFile(null);
+        router.refresh();
+      } else {
+        showToast(res?.error || 'Erro ao importar modelo.', 'error');
+      }
+    } catch {
+      showToast('Erro ao ler arquivo.', 'error');
+    } finally {
+      setIsImportingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string, templateName: string) => {
+    setConfirmState({
+      open: true,
+      title: 'Excluir Modelo',
+      message: `Excluir modelo "${templateName}"? Esta ação não pode ser desfeita.`,
+      variant: 'danger',
+      confirmLabel: 'Excluir',
+      action: 'deleteTemplate',
+      payload: { id: templateId, name: templateName },
+    });
+  };
+
+  const executeDeleteTemplate = async (templateId: string) => {
+    try {
+      const res = await deleteTemplate(templateId);
+      if (res?.success) {
+        showToast('Modelo excluído.', 'success');
+        router.refresh();
+      } else {
+        showToast('Erro ao excluir.', 'error');
+      }
+    } catch {
+      showToast('Erro interno.', 'error');
     }
   };
 
@@ -247,17 +356,46 @@ export default function GeradorClient({
             </p>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" onClick={() => setShowTemplateModal(true)}>
+              📋 Importar Modelo Excel
+            </button>
             <button className="btn btn-secondary" onClick={handleExport} disabled={isExporting}>
               {isExporting ? 'Exportando...' : '📤 Exportar Grade'}
             </button>
             <button className="btn btn-secondary" onClick={() => setShowImportModal(true)} disabled={isImporting}>
               {isImporting ? 'Importando...' : '📥 Importar Grade'}
             </button>
-            <button className="btn btn-secondary" onClick={handleRestoreDefault} disabled={isRestoring} style={{ backgroundColor: 'var(--warning-color)', borderColor: 'var(--warning-color)' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={handleRestoreDefault}
+              disabled={isRestoring || currentTemplates.length === 0}
+              style={{
+                backgroundColor: currentTemplates.length === 0 ? '#ccc' : 'var(--warning-color)',
+                borderColor: currentTemplates.length === 0 ? '#ccc' : 'var(--warning-color)',
+                cursor: currentTemplates.length === 0 ? 'not-allowed' : 'pointer',
+              }}
+              title={currentTemplates.length === 0 ? 'Nenhum modelo cadastrado. Importe um modelo Excel primeiro.' : 'Restaurar grade a partir do modelo selecionado'}
+            >
               {isRestoring ? 'Restaurando...' : '🔄 Restaurar Padrão'}
             </button>
           </div>
         </div>
+
+        {currentTemplates.length > 0 && (
+          <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Modelo para restaurar:</label>
+            <select
+              className="input"
+              value={selectedTemplateId || currentTemplates[0]?.id || ''}
+              onChange={e => setSelectedTemplateId(e.target.value)}
+              style={{ maxWidth: '300px' }}
+            >
+              {currentTemplates.map(t => (
+                <option key={t.id} value={t.id}>{t.name} ({t._count.entries} aulas)</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button
@@ -284,12 +422,17 @@ export default function GeradorClient({
 
       {classNames.map(className => {
         const classSchedules = classesMap.get(className) || [];
-        const maxPeriod = classSchedules.reduce((max, s) => (s.period > max ? s.period : max), 0) || 6;
-        // Determine level and shift from the first schedule entry for this class
-        const firstEntry = classSchedules[0];
         const classInfo = classes.find(c => c.name === className);
-        const classLevel = firstEntry?.class.level ?? classInfo?.level ?? 'FUND2';
-        const classShift = firstEntry?.class.shift ?? classInfo?.shift ?? 'MORNING';
+        const classLevel = classSchedules[0]?.class.level ?? classInfo?.level ?? 'FUND2';
+        const classShift = classSchedules[0]?.class.shift ?? classInfo?.shift ?? 'MORNING';
+        const maxP = (classLevel === 'INFANTIL' || classLevel === 'FUND1') ? 5 : 6;
+
+        // Build lookup: "day-normalizedPeriod" -> schedule entry
+        const slotLookup = new Map<string, ScheduleEntry>();
+        for (const s of classSchedules) {
+          const normPeriod = classShift === 'AFTERNOON' && s.period > 6 ? s.period - 6 : s.period;
+          slotLookup.set(s.dayOfWeek + '-' + normPeriod, s);
+        }
 
         return (
           <div key={className} className="table-container" style={{ padding: '1.5rem', marginBottom: '2rem', marginHorizontal: '2rem' }}>
@@ -311,13 +454,13 @@ export default function GeradorClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {Array.from({ length: maxPeriod }).map((_, periodIndex) => {
-                    const period = periodIndex + 1;
-                    const timeLabel = getSlotTime(classLevel, classShift, period);
+                  {Array.from({ length: maxP }).map((_, periodIndex) => {
+                    const displayPeriod = periodIndex + 1;
+                    const timeLabel = getSlotTime(classLevel, classShift, displayPeriod);
                     return (
-                      <tr key={period} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <tr key={displayPeriod} style={{ borderBottom: '1px solid var(--border-color)' }}>
                         <td style={{ padding: '0.5rem', minWidth: '90px' }}>
-                          <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)' }}>{period}ª Aula</div>
+                          <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)' }}>{displayPeriod}ª Aula</div>
                           {timeLabel && (
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', opacity: 0.7, marginTop: '2px' }}>
                               {timeLabel}
@@ -326,13 +469,13 @@ export default function GeradorClient({
                         </td>
                         {days.map((_, dayIndex) => {
                           const day = dayIndex + 1;
-                          const slot = classSchedules.find(s => s.dayOfWeek === day && s.period === period);
+                          const slot = slotLookup.get(day + '-' + displayPeriod);
                           const classId = classes.find(c => c.name === className)?.id || '';
                           return (
                             <td key={day} style={{ padding: '0.5rem' }}>
                               {slot ? (
                                 <div
-                                  onClick={() => handleSlotClick(slot, classId, day, period, classLevel, classShift)}
+                                  onClick={() => handleSlotClick(slot, classId, day, slot.period, classLevel, classShift)}
                                   style={{
                                     backgroundColor: slot.isFixed ? '#fef3c7' : 'var(--bg-primary)',
                                     padding: '0.5rem',
@@ -372,7 +515,7 @@ export default function GeradorClient({
                                 </div>
                               ) : (
                                 <div
-                                  onClick={() => handleSlotClick(null, classId, day, period, classLevel, classShift)}
+                                  onClick={() => handleSlotClick(null, classId, day, displayPeriod, classLevel, classShift)}
                                   style={{
                                     color: '#888',
                                     fontStyle: 'italic',
@@ -438,7 +581,10 @@ export default function GeradorClient({
           <>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
               {editingSlot.id.startsWith('new-')
-                ? `Adicionar aula na <strong>${editingSlot.class.name}</strong>, ${days[editingSlot.dayOfWeek - 1]}, ${editingSlot.period}ª aula.`
+                ? (() => {
+                    const normP = editingSlot.class.shift === 'AFTERNOON' && editingSlot.period > 6 ? editingSlot.period - 6 : editingSlot.period;
+                    return `Adicionar aula na <strong>${editingSlot.class.name}</strong>, ${days[editingSlot.dayOfWeek - 1]}, ${normP}ª aula.`;
+                  })()
                 : `Alterar a aula de <strong>${editingSlot.subject.name}</strong> da turma <strong>${editingSlot.class.name}</strong>.`}
             </p>
 
@@ -511,6 +657,82 @@ export default function GeradorClient({
           </button>
         </div>
       </Modal>
+
+      {/* ── Modal de Importação de Modelo Excel ──────────────────── */}
+      <Modal
+        isOpen={showTemplateModal}
+        onClose={() => !isImportingTemplate && setShowTemplateModal(false)}
+        title="Importar Modelo Excel"
+      >
+        <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+          Selecione o arquivo Excel (.xlsx) com a grade horária. O modelo será salvo para uso posterior com o botão "Restaurar Padrão".
+        </p>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            className="input"
+            onChange={e => setTemplateFile(e.target.files?.[0] || null)}
+            style={{ width: '100%' }}
+          />
+        </div>
+        {currentTemplates.length > 0 && (
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+              Modelos existentes:
+            </label>
+            <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)' }}>
+              {currentTemplates.map(t => (
+                <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                  <span style={{ fontSize: '0.875rem' }}>{t.name} ({t._count.entries} aulas)</span>
+                  <button
+                    onClick={() => handleDeleteTemplate(t.id, t.name)}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '0.7rem',
+                      background: 'var(--danger-color)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 'var(--radius-sm)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Excluir
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => { setShowTemplateModal(false); setTemplateFile(null); }}>
+            Cancelar
+          </button>
+          <button className="btn btn-primary" onClick={handleImportTemplate} disabled={isImportingTemplate || !templateFile}>
+            {isImportingTemplate ? 'Importando...' : 'Importar Modelo'}
+          </button>
+        </div>
+      </Modal>
+
+      {/* ── Confirm Modal ────────────────────────────────────────── */}
+      <ConfirmModal
+        isOpen={confirmState.open}
+        onClose={() => setConfirmState(s => ({ ...s, open: false }))}
+        onConfirm={() => {
+          setConfirmState(s => ({ ...s, open: false }));
+          if (confirmState.action === 'deleteSlot' && confirmState.payload) {
+            executeDeleteSlot(confirmState.payload);
+          } else if (confirmState.action === 'restoreDefault' && confirmState.payload) {
+            executeRestoreDefault(confirmState.payload);
+          } else if (confirmState.action === 'deleteTemplate' && confirmState.payload) {
+            executeDeleteTemplate(confirmState.payload.id);
+          }
+        }}
+        title={confirmState.title}
+        message={confirmState.message}
+        confirmLabel={confirmState.confirmLabel}
+        variant={confirmState.variant}
+      />
     </>
   );
 }

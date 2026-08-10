@@ -93,3 +93,31 @@ model Schedule {
 
   @@unique([classId, dayOfWeek, period])
 }
+
+model ScheduleTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  entries   ScheduleTemplateEntry[]
+}
+
+model ScheduleTemplateEntry {
+  id          String @id @default(uuid())
+  templateId  String
+  template    ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  className   String // e.g., "6º ano A"
+  subjectName String // e.g., "Matemática"
+  teacherName String? // e.g., "Prof. João"
+  dayOfWeek   Int    // 1=Monday ... 5=Friday
+  period      Int    // 1-6 (normalized period within the shift)
+  isFixed     Boolean @default(false) // e.g., Capela
+}
+
+model SubjectAlias {
+  id            String @id @default(uuid())
+  sourceName    String @unique // e.g., "Cultura Geral"
+  targetName    String // e.g., "Capela"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
