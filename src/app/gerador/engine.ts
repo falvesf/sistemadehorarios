@@ -1,6 +1,9 @@
 import prisma from '@/lib/prisma';
 
-const MAX_PERIODS_PER_DAY = 6;
+function maxPeriods(level: string): number {
+  if (level === 'INFANTIL' || level === 'FUND1') return 5;
+  return 6;
+}
 
 function timeToMin(t: string) {
   const [h, m] = t.split(':').map(Number);
@@ -113,7 +116,7 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     const dp = denorm(period, shift);
 
     if (classOccupied.get(cid)?.has(`${day}-${dp}`)) return false;
-    if ((classDayCount.get(cid)?.get(day) || 0) >= MAX_PERIODS_PER_DAY) return false;
+    if ((classDayCount.get(cid)?.get(day) || 0) >= maxPeriods(level)) return false;
 
     const sMap = classSubjectDayCount.get(cid)?.get(toSchedule[curIdx]?.subjectId);
     if (sMap && (sMap.get(day) || 0) >= 2) return false;
@@ -161,7 +164,7 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     // Build candidate slots
     const candidates: { day: number; period: number }[] = [];
     for (const day of days) {
-      if ((classDayCount.get(curr.classId)?.get(day) || 0) >= MAX_PERIODS_PER_DAY) continue;
+      if ((classDayCount.get(curr.classId)?.get(day) || 0) >= maxPeriods(curr.level)) continue;
       for (const period of periods) {
         if (isValid(curr.teacherId, curr.classId, day, period, curr.shift, curr.level)) {
           candidates.push({ day, period });
