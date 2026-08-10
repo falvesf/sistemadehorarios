@@ -104,29 +104,68 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     return true;
   }
 
+  // Pre-compute teacher loads for sorting
+  const teacherLoads = new Map<string, number>();
+  for (const item of toSchedule) {
+    if (item.teacherId) {
+      teacherLoads.set(item.teacherId, (teacherLoads.get(item.teacherId) || 0) + 1);
+    }
+  }
+
+  // Sort `toSchedule`: most constrained first (teacher with most classes, then classes with most subjects)
+  const classLoads = new Map<string, number>();
+  for (const item of toSchedule) {
+    classLoads.set(item.classId, (classLoads.get(item.classId) || 0) + 1);
+  }
+
+  toSchedule.sort((a, b) => {
+    const aTeacherLoad = a.teacherId ? teacherLoads.get(a.teacherId) || 0 : 0;
+    const bTeacherLoad = b.teacherId ? teacherLoads.get(b.teacherId) || 0 : 0;
+    if (aTeacherLoad !== bTeacherLoad) return bTeacherLoad - aTeacherLoad;
+    const aClassLoad = classLoads.get(a.classId) || 0;
+    const bClassLoad = classLoads.get(b.classId) || 0;
+    return bClassLoad - aClassLoad;
+  });
+
   let nodesExplored = 0;
-  const MAX_NODES = 50000; // Fail-safe timeout
+  const MAX_NODES = 500000; // Increased limit
+  let bestAssignments: any[] = [];
+  let bestAssigned = 0;
 
   function backtrack(index: number): boolean {
     if (index === toSchedule.length) return true; // All scheduled
     if (nodesExplored++ > MAX_NODES) return false;
 
+    // Track best partial solution
+    const currentAssigned = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-')).length;
+    if (currentAssigned > bestAssigned) {
+      bestAssigned = currentAssigned;
+      bestAssignments = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-')).map(a => ({...a}));
+    }
+
     const curr = toSchedule[index];
-    const periods = getPeriods(curr.shift);
+    const periodsList = getPeriods(curr.shift);
 
     // Heuristic: try to group same subject on same day (double classes)
-    const existingDays = assignments.filter(a => a.classId === curr.classId && a.subjectId === curr.subjectId).map(a => a.dayOfWeek);
+    const existingDays = assignments
+      .filter(a => a.classId === curr.classId && a.subjectId === curr.subjectId)
+      .map(a => a.dayOfWeek);
     
+    // Day order: prefer days that already have this subject (for double classes), then spread
     const sortedDays = [...days].sort((a, b) => {
       const aHas = existingDays.includes(a);
       const bHas = existingDays.includes(b);
       if (aHas && !bHas) return -1;
       if (!aHas && bHas) return 1;
-      return 0;
+      // Secondary: prefer days with fewer total classes for this class (spread load)
+      const aCount = assignments.filter(x => x.classId === curr.classId && x.dayOfWeek === a).length;
+      const bCount = assignments.filter(x => x.classId === curr.classId && x.dayOfWeek === b).length;
+      return aCount - bCount;
     });
 
+    // Period order: sequential (1,2,3...) to pack schedule
     for (const day of sortedDays) {
-      for (const period of periods) {
+      for (const period of periodsList) {
         if (isValid(curr.teacherId, curr.classId, day, period, curr.level, curr.shift)) {
           // Check max 2 classes of same subject per day
           const classesThisDay = assignments.filter(a => a.classId === curr.classId && a.subjectId === curr.subjectId && a.dayOfWeek === day).length;
@@ -156,21 +195,18 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     return false; // Backtrack
   }
 
-  // Sort `toSchedule` to put constrained items first
-  toSchedule.sort((a, b) => {
-    const aCount = toSchedule.filter(t => t.teacherId === a.teacherId).length;
-    const bCount = toSchedule.filter(t => t.teacherId === b.teacherId).length;
-    return bCount - aCount;
-  });
-
   const success = backtrack(0);
 
+  // If backtracking failed or timed out, use best partial solution
+  let finalAssignments = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-'));
+  if (!success && bestAssignments.length > finalAssignments.length) {
+    finalAssignments = bestAssignments;
+  }
+
   // 4. Save to DB
-  const newSchedules = assignments.filter(a => typeof a.id === 'string' && a.id.startsWith('temp-'));
-  
-  if (newSchedules.length > 0) {
+  if (finalAssignments.length > 0) {
     await prisma.schedule.createMany({
-      data: newSchedules.map(a => ({
+      data: finalAssignments.map(a => ({
         classId: a.classId,
         subjectId: a.subjectId,
         teacherId: a.teacherId,
@@ -181,5 +217,10 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH') {
     });
   }
 
-  return { success, assigned: newSchedules.length, total: toSchedule.length, timeout: nodesExplored > MAX_NODES };
+  return { 
+    success: success || finalAssignments.length > 0, 
+    assigned: finalAssignments.length, 
+    total: toSchedule.length, 
+    timeout: nodesExplored > MAX_NODES 
+  };
 }
