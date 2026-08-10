@@ -9,6 +9,9 @@ export default async function GeradorPage() {
     orderBy: { name: 'asc' },
     select: { id: true, name: true }
   });
+  const timeSlots = await prisma.timeSlot.findMany({
+    orderBy: [{ level: 'asc' }, { shift: 'asc' }, { dayOfWeek: 'asc' }, { period: 'asc' }]
+  });
 
   return (
     <div className={styles.container}>
@@ -19,7 +22,7 @@ export default async function GeradorPage() {
         </div>
       </header>
 
-      <GeradorClient initialSchedules={schedules} teachers={teachers} />
+      <GeradorClient initialSchedules={schedules} teachers={teachers} timeSlots={timeSlots} />
     </div>
   );
 }

@@ -11,6 +11,9 @@ export default async function ProfessoresPage() {
       }
     }
   });
+  const timeSlots = await prisma.timeSlot.findMany({
+    orderBy: [{ level: 'asc' }, { shift: 'asc' }, { dayOfWeek: 'asc' }, { period: 'asc' }]
+  });
 
   return (
     <div className={styles.container}>
@@ -21,7 +24,7 @@ export default async function ProfessoresPage() {
         </div>
       </header>
 
-      <ProfessoresClient professores={professores} />
+      <ProfessoresClient professores={professores} timeSlots={timeSlots} />
     </div>
   );
 }

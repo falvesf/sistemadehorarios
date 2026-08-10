@@ -8,9 +8,18 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** Controls the max-width of the modal. Defaults to 'md' (500px). */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+const sizeMap: Record<string, string> = {
+  sm: '400px',
+  md: '500px',
+  lg: '860px',
+  xl: '95vw',
+};
+
+export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -34,7 +43,7 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={styles.modal}>
+      <div className={styles.modal} style={{ maxWidth: sizeMap[size] }}>
         <div className={styles.header}>
           <h3>{title}</h3>
           <button className={styles.closeBtn} onClick={onClose}>&times;</button>
