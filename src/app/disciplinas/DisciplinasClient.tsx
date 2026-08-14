@@ -9,7 +9,7 @@ import { createSubject, updateSubject, deleteSubject } from './actions';
 type Subject = {
   id: string;
   name: string;
-  _count: { curriculums: number; schedules: number };
+  _count: { Curriculum: number; Schedule: number };
 };
 
 export default function DisciplinasClient({ initialSubjects }: { initialSubjects: Subject[] }) {
@@ -21,6 +21,8 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
   const [editingName, setEditingName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string | null; name: string }>({ open: false, id: null, name: '' });
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
   const handleCreate = async () => {
     if (!newName.trim()) { showToast('Digite o nome da disciplina.', 'error'); return; }
@@ -29,8 +31,8 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
       const res = await createSubject(newName);
       if (res.success) {
         showToast('Disciplina criada!', 'success');
+        setSubjects(prev => [...prev, { id: res.id || Date.now().toString(), name: newName.trim(), _count: { Curriculum: 0, Schedule: 0 } }]);
         setNewName('');
-        router.refresh();
       } else {
         showToast(res.error || 'Erro ao criar.', 'error');
       }
@@ -95,6 +97,49 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
     setEditingName('');
   };
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === subjects.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(subjects.map(s => s.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleteConfirm(false);
+    const count = selectedIds.size;
+    setIsSaving(true);
+    let deleted = 0;
+    let errors = 0;
+    try {
+      for (const id of selectedIds) {
+        const res = await deleteSubject(id);
+        if (res?.success) deleted++;
+        else errors++;
+      }
+      if (deleted > 0) {
+        showToast(`${deleted} disciplina(s) excluída(s).${errors > 0 ? ` ${errors} não puderam ser excluídas (vinculadas a grades).` : ''}`, deleted === count ? 'success' : 'info');
+      } else {
+        showToast('Nenhuma disciplina pôde ser excluída. Verifique se estão vinculadas a grades.', 'error');
+      }
+      setSelectedIds(new Set());
+      router.refresh();
+    } catch {
+      showToast('Erro ao excluir disciplinas.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <>
       <div className="table-container" style={{ padding: '2rem', marginBottom: '2rem' }}>
@@ -124,12 +169,31 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
           Disciplinas Cadastradas ({subjects.length})
         </h3>
 
+        {selectedIds.size > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <button
+              className="btn btn-secondary"
+              style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }}
+              onClick={() => setBulkDeleteConfirm(true)}
+            >
+              Excluir {selectedIds.size} selecionado(s)
+            </button>
+          </div>
+        )}
+
         {subjects.length === 0 ? (
           <p style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>Nenhuma disciplina cadastrada.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
               <tr>
+                <th style={{ borderBottom: '2px solid var(--border-color)', padding: '0.75rem 0.5rem', textAlign: 'center', width: '40px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size === subjects.length && subjects.length > 0}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 <th style={{ borderBottom: '2px solid var(--border-color)', padding: '0.75rem 0.5rem', textAlign: 'left' }}>Nome</th>
                 <th style={{ borderBottom: '2px solid var(--border-color)', padding: '0.75rem 0.5rem', textAlign: 'center' }}>Grades</th>
                 <th style={{ borderBottom: '2px solid var(--border-color)', padding: '0.75rem 0.5rem', textAlign: 'center' }}>Horários</th>
@@ -138,7 +202,14 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
             </thead>
             <tbody>
               {subjects.map(s => (
-                <tr key={s.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <tr key={s.id} style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: selectedIds.has(s.id) ? '#f0f0ff' : undefined }}>
+                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(s.id)}
+                      onChange={() => toggleSelect(s.id)}
+                    />
+                  </td>
                   <td style={{ padding: '0.75rem 0.5rem' }}>
                     {editingId === s.id ? (
                       <input
@@ -158,10 +229,10 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
                     )}
                   </td>
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    {s._count.curriculums}
+                    {s._count.Curriculum}
                   </td>
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    {s._count.schedules}
+                    {s._count.Schedule}
                   </td>
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
                     {editingId === s.id ? (
@@ -192,15 +263,8 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
                           Editar
                         </button>
                         <button
-                          style={{
-                            padding: '0.3rem 0.75rem',
-                            fontSize: '0.8rem',
-                            background: 'var(--danger-color)',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: 'var(--radius-sm)',
-                            cursor: 'pointer',
-                          }}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }}
                           onClick={() => handleDeleteClick(s.id, s.name)}
                         >
                           Excluir
@@ -221,6 +285,16 @@ export default function DisciplinasClient({ initialSubjects }: { initialSubjects
         onConfirm={executeDelete}
         title="Excluir Disciplina"
         message={`Tem certeza que deseja excluir "${deleteConfirm.name}"?`}
+        confirmLabel="Excluir"
+        variant="danger"
+      />
+
+      <ConfirmModal
+        isOpen={bulkDeleteConfirm}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDelete}
+        title="Excluir Disciplinas"
+        message={`Tem certeza que deseja excluir ${selectedIds.size} disciplina(s) selecionada(s)? Esta ação não pode ser desfeita.`}
         confirmLabel="Excluir"
         variant="danger"
       />

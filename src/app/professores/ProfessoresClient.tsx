@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { updateTeacher, createTeacher, deleteTeacher } from '../actions';
+import { updateTeacher, createTeacher, deleteTeacher, saveTeacherCurriculums, getClassesAndSubjects } from '../actions';
 import { getTeacherAvailability, saveTeacherAvailability } from '../restricoes/actions';
 import styles from './professores.module.css';
 
@@ -12,10 +13,10 @@ type Teacher = {
   id: string;
   name: string;
   type: string;
-  curriculums: {
+  Curriculum: {
     id: string;
-    class: { name: string; shift: string };
-    subject: { name: string };
+    Class: { name: string; shift: string };
+    Subject: { name: string };
   }[];
 };
 
@@ -52,6 +53,7 @@ export default function ProfessoresClient({
   timeSlots: TimeSlot[];
 }) {
   const { showToast } = useToast();
+  const router = useRouter();
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [name, setName] = useState('');
@@ -64,18 +66,29 @@ export default function ProfessoresClient({
   });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+
   // ── Availability states ──────────────────────────────────────
   const [grid, setGrid] = useState<AvailabilitySlot[]>([]);
   const [isLoadingGrid, setIsLoadingGrid] = useState(false);
   // Level selector for viewing times in the availability grid
   const [availLevel, setAvailLevel] = useState<string>('FUND2');
 
+  // ── Curriculum states ────────────────────────────────────────
+  const [curriculums, setCurriculums] = useState<{ classId: string; subjectId: string; classesPerWeek: number }[]>([]);
+  const [allClasses, setAllClasses] = useState<{ id: string; name: string; level: string; shift: string }[]>([]);
+  const [allSubjects, setAllSubjects] = useState<{ id: string; name: string }[]>([]);
+
   // Load availability grid whenever we open a teacher for editing
   useEffect(() => {
     if (editingTeacher) {
       loadGrid(editingTeacher.id);
+      loadCurriculumData(editingTeacher);
     } else {
       setGrid([]);
+      setCurriculums([]);
     }
   }, [editingTeacher?.id]);
 
@@ -85,7 +98,10 @@ export default function ProfessoresClient({
       const saved = await getTeacherAvailability(teacherId);
       const newGrid = createDefaultGrid();
       saved.forEach(s => {
-        const idx = newGrid.findIndex(g => g.dayOfWeek === s.dayOfWeek && g.period === s.period);
+        // DB: period 1-6 + shift (MORNING/AFTERNOON)
+        // Grid: morning 1-6, afternoon 7-12
+        const gridPeriod = s.shift === 'AFTERNOON' ? s.period + 6 : s.period;
+        const idx = newGrid.findIndex(g => g.dayOfWeek === s.dayOfWeek && g.period === gridPeriod);
         if (idx !== -1) newGrid[idx].isAvailable = s.isAvailable;
       });
       setGrid(newGrid);
@@ -93,6 +109,26 @@ export default function ProfessoresClient({
       showToast('Erro ao carregar disponibilidade.', 'error');
     } finally {
       setIsLoadingGrid(false);
+    }
+  };
+
+  const loadCurriculumData = async (teacher: Teacher) => {
+    try {
+      const { classes, subjects } = await getClassesAndSubjects();
+      setAllClasses(classes);
+      setAllSubjects(subjects);
+      const teacherCurrs = teacher.Curriculum.map(c => {
+        const classObj = classes.find((cl: any) => cl.name === c.Class.name);
+        const subjectObj = subjects.find((s: any) => s.name === c.Subject.name);
+        return {
+          classId: classObj?.id || '',
+          subjectId: subjectObj?.id || '',
+          classesPerWeek: 1,
+        };
+      }).filter(c => c.classId && c.subjectId);
+      setCurriculums(teacherCurrs);
+    } catch {
+      showToast('Erro ao carregar turmas e disciplinas.', 'error');
     }
   };
 
@@ -161,7 +197,7 @@ export default function ProfessoresClient({
   };
 
   /**
-   * Unified save: saves teacher data AND availability (when editing).
+   * Unified save: saves teacher data, availability, and curriculums (when editing).
    */
   const handleSave = async (isForceMerge: boolean = false) => {
     if (!name.trim()) { showToast('O nome não pode ficar vazio.', 'error'); return; }
@@ -171,10 +207,13 @@ export default function ProfessoresClient({
         // 1. Save teacher basic data
         const res = await updateTeacher(editingTeacher.id, { name, type: type as 'REGENTE' | 'AULISTA' }, isForceMerge);
         if (res?.success) {
-          // 2. Save availability in the same action
+          // 2. Save availability
           const slotsToSave = grid.filter(g => !g.isAvailable);
           await saveTeacherAvailability(editingTeacher.id, slotsToSave);
-          showToast('Professor e disponibilidade salvos com sucesso!', 'success');
+          // 3. Save curriculums
+          const validCurriculums = curriculums.filter(c => c.classId && c.subjectId);
+          await saveTeacherCurriculums(editingTeacher.id, validCurriculums);
+          showToast('Professor salvo com sucesso!', 'success');
           setEditingTeacher(null);
         } else if (res?.error === 'EXISTS' || res?.error?.includes('Unique constraint')) {
           setMergeConfirm({ isOpen: true, oldName: editingTeacher.name, newName: name });
@@ -224,10 +263,48 @@ export default function ProfessoresClient({
     }
   };
 
+  const toggleSelectAll = () => {
+    if (selectedIds.size === professores.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(professores.map(p => p.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleteConfirm(false);
+    setIsSaving(true);
+    let deleted = 0;
+    for (const id of selectedIds) {
+      const res = await deleteTeacher(id);
+      if (res?.success) deleted++;
+    }
+    setSelectedIds(new Set());
+    showToast(`${deleted} professor(es) excluído(s)!`, deleted > 0 ? 'success' : 'error');
+    router.refresh();
+    setIsSaving(false);
+  };
+
   // ── Render ───────────────────────────────────────────────────
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div>
+          {selectedIds.size > 0 && (
+            <button className="btn btn-secondary" style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }} onClick={() => setBulkDeleteConfirm(true)}>
+              Excluir {selectedIds.size} selecionado(s)
+            </button>
+          )}
+        </div>
         <button className="btn btn-primary" onClick={handleCreateClick}>+ Novo Professor</button>
       </div>
 
@@ -235,6 +312,14 @@ export default function ProfessoresClient({
         <table>
           <thead>
             <tr>
+              <th style={{ width: '40px' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.size === professores.length && professores.length > 0}
+                  onChange={toggleSelectAll}
+                  style={{ cursor: 'pointer' }}
+                />
+              </th>
               <th>Nome</th>
               <th>Tipo</th>
               <th>Turmas/Disciplinas</th>
@@ -243,7 +328,15 @@ export default function ProfessoresClient({
           </thead>
           <tbody>
             {professores.map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} style={selectedIds.has(p.id) ? { backgroundColor: '#f0f0ff' } : undefined}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(p.id)}
+                    onChange={() => toggleSelect(p.id)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </td>
                 <td><strong>{p.name}</strong></td>
                 <td>
                   <span className={`${styles.badge} ${p.type === 'REGENTE' ? styles.badgeRegente : styles.badgeAulista}`}>
@@ -252,16 +345,25 @@ export default function ProfessoresClient({
                 </td>
                 <td>
                   <div className={styles.curriculumList}>
-                    {p.curriculums.map(c => (
+                    {p.Curriculum.map(c => (
                       <span key={c.id} className={styles.curriculumItem}>
-                        {c.class.name} - {c.subject.name}
+                        {c.Class.name} - {c.Subject.name}
                       </span>
                     ))}
-                    {p.curriculums.length === 0 && <span className={styles.empty}>Nenhuma</span>}
+                    {p.Curriculum.length === 0 && <span className={styles.empty}>Nenhuma</span>}
                   </div>
                 </td>
                 <td>
-                  <button className="btn btn-secondary" onClick={() => handleEditClick(p)}>Editar</button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn-secondary" onClick={() => handleEditClick(p)}>Editar</button>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }}
+                      onClick={() => { setEditingTeacher(p); setDeleteConfirmOpen(true); }}
+                    >
+                      Excluir
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -452,6 +554,82 @@ export default function ProfessoresClient({
           </>
         )}
 
+        {/* ── Turmas e Disciplinas (apenas na edição) ─────────── */}
+        {editingTeacher && (
+          <>
+            <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', margin: '1.5rem 0' }} />
+            <h4 style={{ color: 'var(--primary-color)', marginBottom: '0.75rem' }}>Turmas e Disciplinas</h4>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+              Defina quais turmas e disciplinas este professor irá ministrar.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+              {curriculums.map((curr, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <select
+                    className="input"
+                    style={{ flex: 2, padding: '0.4rem', fontSize: '0.85rem' }}
+                    value={curr.classId}
+                    onChange={e => {
+                      const newCurrs = [...curriculums];
+                      newCurrs[idx].classId = e.target.value;
+                      setCurriculums(newCurrs);
+                    }}
+                  >
+                    <option value="">Selecione a turma</option>
+                    {allClasses.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.shift === 'MORNING' ? 'Manhã' : 'Tarde'})</option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    style={{ flex: 2, padding: '0.4rem', fontSize: '0.85rem' }}
+                    value={curr.subjectId}
+                    onChange={e => {
+                      const newCurrs = [...curriculums];
+                      newCurrs[idx].subjectId = e.target.value;
+                      setCurriculums(newCurrs);
+                    }}
+                  >
+                    <option value="">Selecione a disciplina</option>
+                    {allSubjects.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    className="input"
+                    style={{ width: '60px', padding: '0.4rem', fontSize: '0.85rem', textAlign: 'center' }}
+                    value={curr.classesPerWeek}
+                    min={1}
+                    max={10}
+                    onChange={e => {
+                      const newCurrs = [...curriculums];
+                      newCurrs[idx].classesPerWeek = parseInt(e.target.value) || 1;
+                      setCurriculums(newCurrs);
+                    }}
+                  />
+                  <button
+                    className="btn btn-secondary"
+                    style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem', color: 'var(--danger-color)' }}
+                    onClick={() => setCurriculums(curriculums.filter((_, i) => i !== idx))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: '0.85rem' }}
+              onClick={() => setCurriculums([...curriculums, { classId: '', subjectId: '', classesPerWeek: 1 }])}
+            >
+              + Adicionar Disciplina
+            </button>
+          </>
+        )}
+
         {/* ── Ações do modal ──────────────────────────────────────── */}
         <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', marginBottom: '1rem' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
@@ -511,6 +689,16 @@ export default function ProfessoresClient({
         title="Excluir Professor"
         message={`Tem certeza que deseja excluir o(a) professor(a) ${editingTeacher?.name}? As matérias dele(a) ficarão "Sem Professor".`}
         confirmLabel="Excluir"
+        variant="danger"
+      />
+
+      <ConfirmModal
+        isOpen={bulkDeleteConfirm}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDelete}
+        title="Excluir Professores"
+        message={`Tem certeza que deseja excluir ${selectedIds.size} professor(es) selecionado(s)?`}
+        confirmLabel="Excluir Todos"
         variant="danger"
       />
     </>

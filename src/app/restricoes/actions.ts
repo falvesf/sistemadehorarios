@@ -9,19 +9,18 @@ export async function getTeacherAvailability(teacherId: string) {
   });
 }
 
-export async function saveTeacherAvailability(teacherId: string, availabilities: { dayOfWeek: number, period: number, isAvailable: boolean }[]) {
+export async function saveTeacherAvailability(teacherId: string, availabilities: { dayOfWeek: number, period: number, isAvailable: boolean, shift?: string }[]) {
   // Clear existing availabilities for this teacher
   await prisma.availability.deleteMany({
     where: { teacherId }
   });
 
-  // Only insert the ones that are marked as unavailable (isAvailable: false)
-  // Assuming by default they are available if not in the DB, to save space.
-  // Or we can just insert everything passed. Let's insert what is passed.
+  // Save with shift and normalized period (1-6)
   const data = availabilities.map(a => ({
     teacherId,
     dayOfWeek: a.dayOfWeek,
-    period: a.period,
+    shift: a.shift || (a.period > 6 ? 'AFTERNOON' : 'MORNING'),
+    period: a.period > 6 ? a.period - 6 : a.period,
     isAvailable: a.isAvailable
   }));
 
@@ -42,17 +41,20 @@ export async function addCapelaRule(classIds: string[], dayOfWeek: number, perio
       capelaSubject = await prisma.subject.create({ data: { name: 'Capela' } });
     }
 
+    // Normalize: periods 7-12 → 1-6
+    const normalizedPeriod = period > 6 ? period - 6 : period;
+
     const data = classIds.map(classId => ({
       classId,
       subjectId: capelaSubject!.id,
       teacherId,
       dayOfWeek,
-      period,
+      period: normalizedPeriod,
       isFixed: true
     }));
 
     await prisma.schedule.deleteMany({
-      where: { classId: { in: classIds }, dayOfWeek, period }
+      where: { classId: { in: classIds }, dayOfWeek, period: normalizedPeriod }
     });
 
     await prisma.schedule.createMany({ data });
@@ -68,11 +70,45 @@ export async function deleteCapelaRule(scheduleId: string) {
   try {
     await prisma.schedule.delete({ where: { id: scheduleId } });
     revalidatePath('/restricoes');
+    revalidatePath('/gerador');
     return { success: true };
   } catch (e: any) {
     console.error(e);
     return { success: false, error: e.message };
   }
+}
+
+export async function updateCapelaRule(scheduleId: string, dayOfWeek: number, period: number, teacherId: string) {
+  try {
+    const currentRule = await prisma.schedule.findUnique({ where: { id: scheduleId } });
+    if (!currentRule) return { success: false, error: 'Regra não encontrada.' };
+
+    // Delete any existing entry for this class/day/period (including non-fixed)
+    await prisma.schedule.deleteMany({
+      where: { classId: currentRule.classId, dayOfWeek, period }
+    });
+
+    await prisma.schedule.update({
+      where: { id: scheduleId },
+      data: { dayOfWeek, period, teacherId },
+    });
+    revalidatePath('/restricoes');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function getCapelaRules() {
+  const capelaSubject = await prisma.subject.findUnique({ where: { name: 'Capela' } });
+  if (!capelaSubject) return [];
+  return await prisma.schedule.findMany({
+    where: { isFixed: true, subjectId: capelaSubject.id },
+    include: { Class: true, Subject: true, Teacher: true },
+    orderBy: [{ Class: { name: 'asc' } }, { dayOfWeek: 'asc' }, { period: 'asc' }]
+  });
 }
 
 export async function getTimeSlots() {

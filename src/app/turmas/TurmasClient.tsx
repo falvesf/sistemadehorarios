@@ -1,18 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { updateCurriculum, deleteClass, updateClass } from '../actions';
+import { updateCurriculum, createCurriculum, deleteCurriculum, deleteClass, updateClass } from '../actions';
 import styles from '../professores/professores.module.css';
 
 type Curriculum = {
   id: string;
   classesPerWeek: number;
-  subject: { name: string };
+  Subject: { name: string };
   teacherId: string | null;
-  teacher: { id: string; name: string } | null;
+  Teacher: { id: string; name: string } | null;
 };
 
 type Turma = {
@@ -20,7 +21,7 @@ type Turma = {
   name: string;
   level: string;
   shift: string;
-  curriculums: Curriculum[];
+  Curriculum: Curriculum[];
 };
 
 type Teacher = {
@@ -28,8 +29,14 @@ type Teacher = {
   name: string;
 };
 
-export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], teachers: Teacher[] }) {
+type Subject = {
+  id: string;
+  name: string;
+};
+
+export default function TurmasClient({ turmas, teachers, subjects }: { turmas: Turma[], teachers: Teacher[], subjects: Subject[] }) {
   const { showToast } = useToast();
+  const router = useRouter();
   const [editingTurma, setEditingTurma] = useState<Turma | null>(null);
   
   // States for Class details
@@ -43,6 +50,12 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
 
   // Confirm dialog
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmDeleteCurriculumId, setConfirmDeleteCurriculumId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+
+  // State for adding new discipline to grade
+  const [newSubjectId, setNewSubjectId] = useState('');
 
   const handleEditClick = (turma: Turma) => {
     setEditingTurma(turma);
@@ -50,17 +63,53 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
     setClassLevel(turma.level);
     setClassShift(turma.shift);
     // clone curriculums for editing
-    setLocalCurriculums(turma.curriculums.map(c => ({ ...c })));
+    setLocalCurriculums(turma.Curriculum.map(c => ({ ...c })));
+    setNewSubjectId('');
+    setConfirmDeleteCurriculumId(null);
   };
 
   const handleCurriculumChange = (curriculumId: string, field: 'classesPerWeek' | 'teacherId', value: any) => {
     setLocalCurriculums(prev => prev.map(c => {
       if (c.id === curriculumId) {
-        return { ...c, [field]: value };
+        const parsed = field === 'classesPerWeek' ? parseInt(value) || 0 : value;
+        return { ...c, [field]: parsed };
       }
       return c;
     }));
   };
+
+  const handleAddSubjectToGrade = () => {
+    if (!newSubjectId || !editingTurma) return;
+    const subject = subjects.find(s => s.id === newSubjectId);
+    setLocalCurriculums(prev => [...prev, {
+      id: `new-${Date.now()}`,
+      classId: editingTurma!.id,
+      subjectId: newSubjectId,
+      Subject: { name: subject?.name || '' },
+      classesPerWeek: 1,
+      teacherId: null,
+      Teacher: null,
+      _isNew: true,
+    }]);
+    setNewSubjectId('');
+  };
+
+  const handleRemoveSubjectFromGrade = async (curriculumId: string) => {
+    if (curriculumId.startsWith('new-')) {
+      setLocalCurriculums(prev => prev.filter(c => c.id !== curriculumId));
+      return;
+    }
+    const result = await deleteCurriculum(curriculumId);
+    if (result?.error) {
+      showToast(result.error, 'error');
+      return;
+    }
+    setLocalCurriculums(prev => prev.filter(c => c.id !== curriculumId));
+    showToast('Disciplina removida da grade.', 'success');
+  };
+
+  const usedSubjectIds = localCurriculums.map(c => c.subjectId);
+  const availableSubjects = subjects.filter(s => !usedSubjectIds.includes(s.id));
 
   const handleSave = async () => {
     if (!className.trim()) {
@@ -77,12 +126,22 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
          return; 
       }
 
-      // call updateCurriculum for each changed item sequentially (or Promise.all)
-      await Promise.all(
-        localCurriculums.map(c => updateCurriculum(c.id, Number(c.classesPerWeek), c.teacherId === '' ? null : c.teacherId))
-      );
+      // Save each curriculum sequentially to avoid race conditions
+      for (let idx = 0; idx < localCurriculums.length; idx++) {
+        const c = localCurriculums[idx];
+        if (c._isNew) {
+          const res = await createCurriculum(editingTurma!.id, c.subjectId, Number(c.classesPerWeek), c.teacherId === '' ? null : c.teacherId);
+          if (res?.success && res.id) {
+            localCurriculums[idx] = { ...c, id: res.id, _isNew: false };
+          }
+        } else {
+          await updateCurriculum(c.id, Number(c.classesPerWeek), c.teacherId === '' ? null : c.teacherId);
+        }
+      }
+      setLocalCurriculums([...localCurriculums]);
       showToast('Turma e Grade atualizadas com sucesso!', 'success');
       setEditingTurma(null);
+      router.refresh();
     } catch (e) {
       showToast('Erro ao atualizar a turma.', 'error');
     } finally {
@@ -114,12 +173,67 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
     }
   };
 
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === turmas.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(turmas.map(t => t.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleteConfirm(false);
+    const count = selectedIds.size;
+    setIsSaving(true);
+    let deleted = 0;
+    try {
+      for (const id of selectedIds) {
+        const res = await deleteClass(id);
+        if (res?.success) deleted++;
+      }
+      showToast(`${deleted} turma(s) excluída(s).${deleted < count ? ` ${count - deleted} não puderam ser excluídas.` : ''}`, deleted > 0 ? 'success' : 'error');
+      setSelectedIds(new Set());
+      router.refresh();
+    } catch {
+      showToast('Erro ao excluir turmas.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <>
       <div className="table-container">
+        {selectedIds.size > 0 && (
+          <div style={{ marginBottom: '1rem' }}>
+            <button
+              className="btn btn-secondary"
+              style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }}
+              onClick={() => setBulkDeleteConfirm(true)}
+            >
+              Excluir {selectedIds.size} selecionada(s)
+            </button>
+          </div>
+        )}
         <table>
           <thead>
             <tr>
+              <th style={{ textAlign: 'center', width: '40px' }}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.size === turmas.length && turmas.length > 0}
+                  onChange={toggleSelectAll}
+                />
+              </th>
               <th>Turma</th>
               <th>Nível</th>
               <th>Turno</th>
@@ -129,24 +243,43 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
           </thead>
           <tbody>
             {turmas.map(t => (
-              <tr key={t.id}>
+              <tr key={t.id} style={{ backgroundColor: selectedIds.has(t.id) ? '#f0f0ff' : undefined }}>
+                <td style={{ textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(t.id)}
+                    onChange={() => toggleSelect(t.id)}
+                  />
+                </td>
                 <td><strong>{t.name}</strong></td>
                 <td>{t.level}</td>
                 <td>{t.shift === 'MORNING' ? 'Manhã' : 'Tarde'}</td>
                 <td>
                   <div className={styles.curriculumList}>
-                    {t.curriculums.map(c => (
+                    {t.Curriculum.map(c => (
                       <span key={c.id} className={styles.curriculumItem}>
-                        <strong>{c.subject.name}</strong> 
-                        {c.teacher ? ` (${c.teacher.name})` : ''} 
+                        <strong>{c.Subject.name}</strong> 
+                        {c.Teacher ? ` (${c.Teacher.name})` : ''} 
                         <span style={{opacity: 0.6}}> - {c.classesPerWeek}x</span>
                       </span>
                     ))}
-                    {t.curriculums.length === 0 && <span className={styles.empty}>Grade vazia</span>}
+                    {t.Curriculum.length === 0 && <span className={styles.empty}>Grade vazia</span>}
                   </div>
                 </td>
                 <td>
-                  <button className="btn btn-secondary" onClick={() => handleEditClick(t)}>Editar Grade</button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn-secondary" onClick={() => handleEditClick(t)}>Editar Grade</button>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }}
+                      onClick={() => {
+                        setEditingTurma(t);
+                        setConfirmOpen(true);
+                      }}
+                    >
+                      Excluir
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -185,15 +318,27 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border-color)', margin: '1.5rem 0' }} />
 
-        <h4 style={{ marginBottom: '0.5rem', color: 'var(--primary-color)' }}>Grade Curricular</h4>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <h4 style={{ color: 'var(--primary-color)', margin: 0 }}>Grade Curricular</h4>
+          <span style={{
+            fontSize: '0.9rem',
+            fontWeight: 'bold',
+            color: 'var(--primary-color)',
+            backgroundColor: '#ede9fe',
+            padding: '0.25rem 0.75rem',
+            borderRadius: 'var(--radius-sm)',
+          }}>
+            {localCurriculums.reduce((sum, c) => sum + c.classesPerWeek, 0)} aulas
+          </span>
+        </div>
         <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
           Ajuste a quantidade de aulas na semana e o professor responsável por cada disciplina.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', maxHeight: '40vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
           {localCurriculums.map(c => (
-            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '1rem', alignItems: 'center' }}>
-              <strong style={{ fontSize: '0.875rem' }}>{c.subject.name}</strong>
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto', gap: '1rem', alignItems: 'center' }}>
+              <strong style={{ fontSize: '0.875rem' }}>{c.Subject?.name || '???'}</strong>
               
               <input 
                 type="number" 
@@ -215,10 +360,33 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
                   <option key={prof.id} value={prof.id}>{prof.name}</option>
                 ))}
               </select>
+
+              <button
+                className="btn"
+                onClick={() => handleRemoveSubjectFromGrade(c.id)}
+                style={{ backgroundColor: 'var(--danger-color)', color: 'white', border: 'none', borderRadius: 'var(--radius-sm)', padding: '0.4rem 0.75rem', fontSize: '0.8rem' }}
+                title="Remover disciplina da grade"
+              >
+                ✕
+              </button>
             </div>
           ))}
           {localCurriculums.length === 0 && <p style={{color: 'var(--text-secondary)'}}>Nenhuma disciplina vinculada.</p>}
         </div>
+
+        {availableSubjects.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+            <select className="input" value={newSubjectId} onChange={e => setNewSubjectId(e.target.value)} style={{ flex: 1 }}>
+              <option value="">Adicionar disciplina...</option>
+              {availableSubjects.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <button className="btn btn-primary" onClick={handleAddSubjectToGrade} disabled={!newSubjectId}>
+              + Adicionar
+            </button>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
           <button className="btn btn-secondary" style={{ color: 'var(--danger-color)', borderColor: 'var(--danger-color)' }} onClick={handleDeleteClass} disabled={isSaving}>
@@ -240,6 +408,16 @@ export default function TurmasClient({ turmas, teachers }: { turmas: Turma[], te
         onConfirm={executeDeleteClass}
         title="Excluir Turma"
         message={`Tem certeza que deseja apagar a turma ${editingTurma?.name} inteira do sistema? Isso apagará toda a grade curricular e horários associados a ela e não pode ser desfeito.`}
+        confirmLabel="Excluir"
+        variant="danger"
+      />
+
+      <ConfirmModal
+        isOpen={bulkDeleteConfirm}
+        onClose={() => setBulkDeleteConfirm(false)}
+        onConfirm={handleBulkDelete}
+        title="Excluir Turmas"
+        message={`Tem certeza que deseja excluir ${selectedIds.size} turma(s) selecionada(s)? Esta ação não pode ser desfeita.`}
         confirmLabel="Excluir"
         variant="danger"
       />

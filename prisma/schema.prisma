@@ -7,117 +7,143 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-model Teacher {
-  id             String         @id @default(uuid())
-  name           String         @unique
-  type           String         // REGENTE or AULISTA
-  curriculums    Curriculum[]
-  availabilities Availability[]
-  schedules      Schedule[]
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+model Availability {
+  id          String  @id @default(cuid())
+  teacherId   String
+  dayOfWeek   Int
+  shift       String  @default("MORNING")
+  period      Int
+  isAvailable Boolean @default(true)
+  Teacher     Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, dayOfWeek, shift, period])
 }
 
 model Class {
-  id          String       @id @default(uuid())
-  name        String       @unique // e.g., "6º ano A"
-  shift       String       // MORNING or AFTERNOON
-  level       String       // INFANTIL, FUND1, FUND2, MEDIO
-  regenteName String?      // For INFANTIL/FUND1
-  curriculums Curriculum[]
-  schedules   Schedule[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-}
-
-model Subject {
-  id          String       @id @default(uuid())
-  name        String       @unique // e.g., "Matemática", "Português", "Capela"
-  curriculums Curriculum[]
-  schedules   Schedule[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id                String              @id @default(cuid())
+  name              String              @unique
+  shift             String
+  level             String
+  regenteName       String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @default(now())
+  Curriculum        Curriculum[]
+  FixedSubjectClass FixedSubjectClass[]
+  Schedule          Schedule[]
 }
 
 model Curriculum {
-  id             String  @id @default(uuid())
+  id             String   @id @default(cuid())
   classId        String
-  class          Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
   subjectId      String
-  subject        Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   teacherId      String?
-  teacher        Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
   classesPerWeek Int
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime @default(now())
+  Teacher        Teacher? @relation(fields: [teacherId], references: [id])
+  Subject        Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  Class          Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
 
   @@unique([classId, subjectId])
 }
 
-model Availability {
-  id          String  @id @default(uuid())
-  teacherId   String
-  teacher     Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  dayOfWeek   Int
-  period      Int
-  isAvailable Boolean @default(true)
+model FixedSubjectClass {
+  id                 String             @id @default(cuid())
+  configId           String
+  classId            String
+  assignedPeriod     Int?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @default(now())
+  Class              Class              @relation(fields: [classId], references: [id], onDelete: Cascade)
+  FixedSubjectConfig FixedSubjectConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
-  @@unique([teacherId, dayOfWeek, period])
+  @@unique([configId, classId])
 }
 
-model TimeSlot {
-  id        String @id @default(uuid())
-  level     String // INFANTIL, FUND1, FUND2
-  shift     String // MORNING, AFTERNOON
-  dayOfWeek Int    // 1 to 5
-  period    Int    // 1 to 6
-  startTime String // e.g. "07:15"
-  endTime   String // e.g. "08:05"
-
-  @@unique([level, shift, dayOfWeek, period])
+model FixedSubjectConfig {
+  id                String              @id @default(cuid())
+  subjectId         String              @unique
+  classesPerWeek    Int
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @default(now())
+  FixedSubjectClass FixedSubjectClass[]
+  Subject           Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 }
 
 model Schedule {
-  id        String  @id @default(uuid())
+  id        String   @id @default(cuid())
   classId   String
-  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
   subjectId String
-  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   teacherId String?
-  teacher   Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
-  dayOfWeek Int     // 1=Monday ... 5=Friday
-  period    Int     // 1, 2, 3, 4, 5... (1ª aula, 2ª aula)
-  isFixed   Boolean @default(false) // For Chapel or locked classes
+  dayOfWeek Int
+  period    Int
+  isFixed   Boolean  @default(false)
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now())
+  Teacher   Teacher? @relation(fields: [teacherId], references: [id])
+  Subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  Class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
 
   @@unique([classId, dayOfWeek, period])
 }
 
 model ScheduleTemplate {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  entries   ScheduleTemplateEntry[]
+  id                    String                  @id @default(cuid())
+  name                  String
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @default(now())
+  ScheduleTemplateEntry ScheduleTemplateEntry[]
 }
 
 model ScheduleTemplateEntry {
-  id          String @id @default(uuid())
-  templateId  String
-  template    ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  className   String // e.g., "6º ano A"
-  subjectName String // e.g., "Matemática"
-  teacherName String? // e.g., "Prof. João"
-  dayOfWeek   Int    // 1=Monday ... 5=Friday
-  period      Int    // 1-6 (normalized period within the shift)
-  isFixed     Boolean @default(false) // e.g., Capela
+  id               String           @id @default(cuid())
+  templateId       String
+  className        String
+  subjectName      String
+  teacherName      String?
+  dayOfWeek        Int
+  period           Int
+  isFixed          Boolean          @default(false)
+  ScheduleTemplate ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+}
+
+model Subject {
+  id                 String              @id @default(cuid())
+  name               String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @default(now())
+  Curriculum         Curriculum[]
+  FixedSubjectConfig FixedSubjectConfig?
+  Schedule           Schedule[]
 }
 
 model SubjectAlias {
-  id            String @id @default(uuid())
-  sourceName    String @unique // e.g., "Cultura Geral"
-  targetName    String // e.g., "Capela"
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id         String   @id @default(cuid())
+  sourceName String   @unique
+  targetName String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now())
+}
+
+model Teacher {
+  id           String         @id @default(cuid())
+  name         String         @unique
+  type         String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @default(now())
+  Availability Availability[]
+  Curriculum   Curriculum[]
+  Schedule     Schedule[]
+}
+
+model TimeSlot {
+  id        String @id @default(cuid())
+  level     String
+  shift     String
+  dayOfWeek Int
+  period    Int
+  startTime String
+  endTime   String
+
+  @@unique([level, shift, dayOfWeek, period])
 }

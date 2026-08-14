@@ -6,8 +6,8 @@ export default async function ProfessoresPage() {
   const professores = await prisma.teacher.findMany({
     orderBy: { name: 'asc' },
     include: {
-      curriculums: {
-        include: { class: true, subject: true }
+      Curriculum: {
+        include: { Class: true, Subject: true }
       }
     }
   });

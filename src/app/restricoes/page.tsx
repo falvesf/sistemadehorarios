@@ -14,8 +14,8 @@ export default async function RestricoesPage() {
   });
 
   const capelaRules = await prisma.schedule.findMany({
-    where: { subject: { name: 'Capela' }, isFixed: true },
-    include: { class: { select: { name: true, shift: true, level: true } }, teacher: { select: { name: true } } },
+    where: { Subject: { name: 'Capela' }, isFixed: true },
+    include: { Class: { select: { name: true, shift: true, level: true } }, Teacher: { select: { id: true, name: true } } },
     orderBy: [{ dayOfWeek: 'asc' }, { period: 'asc' }]
   });
 

@@ -82,6 +82,39 @@ export async function updateCurriculum(id: string, classesPerWeek: number, teach
   revalidatePath('/professores');
 }
 
+export async function createCurriculum(classId: string, subjectId: string, classesPerWeek: number = 1, teacherId: string | null = null) {
+  try {
+    const existing = await prisma.curriculum.findUnique({
+      where: { classId_subjectId: { classId, subjectId } },
+    });
+    if (existing) {
+      return { success: false, error: 'Esta disciplina já está na grade curricular.' };
+    }
+
+    const curriculum = await prisma.curriculum.create({
+      data: { classId, subjectId, classesPerWeek, teacherId },
+    });
+    revalidatePath('/turmas');
+    revalidatePath('/gerador');
+    return { success: true, id: curriculum.id };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deleteCurriculum(id: string) {
+  try {
+    await prisma.curriculum.delete({ where: { id } });
+    revalidatePath('/turmas');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
 export async function deleteClass(id: string) {
   try {
     await prisma.class.delete({
@@ -112,5 +145,56 @@ export async function updateClass(id: string, data: { name: string, level: strin
   } catch (e: any) {
     console.error(e);
     return { success: false, error: e.message };
+  }
+}
+
+export async function saveTeacherCurriculums(
+  teacherId: string,
+  curriculums: { classId: string; subjectId: string; classesPerWeek: number }[]
+) {
+  try {
+    await prisma.curriculum.deleteMany({ where: { teacherId } });
+
+    for (const curr of curriculums) {
+      const existing = await prisma.curriculum.findUnique({
+        where: { classId_subjectId: { classId: curr.classId, subjectId: curr.subjectId } },
+      });
+      if (existing) {
+        await prisma.curriculum.update({
+          where: { id: existing.id },
+          data: { teacherId, classesPerWeek: curr.classesPerWeek },
+        });
+      } else {
+        await prisma.curriculum.create({
+          data: {
+            classId: curr.classId,
+            subjectId: curr.subjectId,
+            classesPerWeek: curr.classesPerWeek,
+            teacherId,
+          },
+        });
+      }
+    }
+
+    revalidatePath('/professores');
+    revalidatePath('/turmas');
+    revalidatePath('/gerador');
+    return { success: true };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function getClassesAndSubjects() {
+  try {
+    const [classes, subjects] = await Promise.all([
+      prisma.class.findMany({ orderBy: { name: 'asc' } }),
+      prisma.subject.findMany({ orderBy: { name: 'asc' } }),
+    ]);
+    return { classes, subjects };
+  } catch (e: any) {
+    console.error(e);
+    return { classes: [], subjects: [] };
   }
 }

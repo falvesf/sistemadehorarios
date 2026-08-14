@@ -9,13 +9,18 @@ export default async function TurmasPage() {
       { name: 'asc' }
     ],
     include: {
-      curriculums: {
-        include: { subject: true, teacher: true }
+      Curriculum: {
+        include: { Subject: true, Teacher: true }
       }
     }
   });
 
   const teachers = await prisma.teacher.findMany({
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true }
+  });
+
+  const subjects = await prisma.subject.findMany({
     orderBy: { name: 'asc' },
     select: { id: true, name: true }
   });
@@ -30,7 +35,7 @@ export default async function TurmasPage() {
         <button className="btn btn-primary">+ Nova Turma</button>
       </header>
 
-      <TurmasClient turmas={turmas} teachers={teachers} />
+      <TurmasClient turmas={turmas} teachers={teachers} subjects={subjects} />
     </div>
   );
 }

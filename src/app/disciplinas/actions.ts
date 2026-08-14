@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache';
 export async function getSubjects() {
   return await prisma.subject.findMany({
     include: {
-      _count: { select: { curriculums: true, schedules: true } },
+      _count: { select: { Curriculum: true, Schedule: true } },
     },
     orderBy: { name: 'asc' },
   });
@@ -20,15 +20,15 @@ export async function createSubject(name: string) {
     }
 
     const existing = await prisma.subject.findFirst({
-      where: { name: { equals: trimmed, mode: 'insensitive' } },
+      where: { name: trimmed },
     });
     if (existing) {
       return { success: false, error: `Já existe uma disciplina com o nome "${trimmed}".` };
     }
 
-    await prisma.subject.create({ data: { name: trimmed } });
+    const newSubject = await prisma.subject.create({ data: { name: trimmed } });
     revalidatePath('/disciplinas');
-    return { success: true };
+    return { success: true, id: newSubject.id };
   } catch (e: any) {
     console.error(e);
     return { success: false, error: e.message };
@@ -43,7 +43,7 @@ export async function updateSubject(id: string, name: string) {
     }
 
     const existing = await prisma.subject.findFirst({
-      where: { name: { equals: trimmed, mode: 'insensitive' }, id: { not: id } },
+      where: { name: trimmed, id: { not: id } },
     });
     if (existing) {
       return { success: false, error: `Já existe uma disciplina com o nome "${trimmed}".` };
@@ -64,15 +64,15 @@ export async function deleteSubject(id: string) {
   try {
     const subject = await prisma.subject.findUnique({
       where: { id },
-      include: { _count: { select: { curriculums: true, schedules: true } } },
+      include: { _count: { select: { Curriculum: true, Schedule: true } } },
     });
     if (!subject) {
       return { success: false, error: 'Disciplina não encontrada.' };
     }
-    if (subject._count.curriculums > 0 || subject._count.schedules > 0) {
+    if (subject._count.Curriculum > 0 || subject._count.Schedule > 0) {
       return {
         success: false,
-        error: `Não é possível excluir "${subject.name}" pois está vinculada a ${subject._count.curriculums} grade(s) curricular(es) e ${subject._count.schedules} horário(s).`,
+        error: `Não é possível excluir "${subject.name}" pois está vinculada a ${subject._count.Curriculum} grade(s) curricular(es) e ${subject._count.Schedule} horário(s).`,
       };
     }
 
