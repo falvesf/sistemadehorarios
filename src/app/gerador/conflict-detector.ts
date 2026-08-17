@@ -169,7 +169,51 @@ export async function detectConflicts(): Promise<Conflict[]> {
       const foundSlot = !!best;
       const suggestedDay = best?.day || 1;
       const suggestedPeriod = best?.period || 1;
-      
+
+      // Se não encontrou slot direto, tentar encontrar uma TROCA
+      let swapFix: SuggestedFix | undefined;
+      if (!foundSlot && curr.teacherId) {
+        const teacherSchedules = schedules.filter(s => s.teacherId === curr.teacherId && !s.isFixed);
+        for (const ts of teacherSchedules) {
+          const tsCls = classMap.get(ts.classId);
+          if (!tsCls) continue;
+          const tsMaxP = (tsCls.level === 'INFANTIL' || tsCls.level === 'FUND1') ? 5 : 6;
+          
+          for (let altP = 1; altP <= tsMaxP; altP++) {
+            if (altP === ts.period) continue;
+            const altKey = ts.classId + '-' + ts.dayOfWeek + '-' + altP;
+            if (occupiedSlots.has(altKey)) continue;
+            if (classSlots.some(s => s.dayOfWeek === ts.dayOfWeek && s.period === altP)) continue;
+            
+            const teacherFree = !teacherUnavail.has(ts.teacherId + '-' + ts.dayOfWeek + '-' + altP) &&
+              !schedules.some(s => s.teacherId === ts.teacherId && s.dayOfWeek === ts.dayOfWeek && s.period === altP && s.id !== ts.id);
+            
+            if (teacherFree) {
+              const targetFree = !teacherUnavail.has(curr.teacherId + '-' + ts.dayOfWeek + '-' + ts.period) &&
+                !schedules.some(s => s.teacherId === curr.teacherId && s.dayOfWeek === ts.dayOfWeek && s.period === ts.period);
+              
+              if (targetFree) {
+                swapFix = {
+                  type: 'move_class',
+                  description: `Trocar: mover ${ts.Subject?.name || ''} (${tsCls.name}) de ${['', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex'][ts.dayOfWeek]}ª ${ts.period}ª para ${altP}ª, e colocar ${curr.Subject.name} na posição ${ts.period}ª`,
+                  data: {
+                    classId: ts.classId,
+                    subjectId: ts.subjectId,
+                    teacherId: ts.teacherId || undefined,
+                    fromDay: ts.dayOfWeek,
+                    fromPeriod: ts.period,
+                    toDay: ts.dayOfWeek,
+                    toPeriod: altP,
+                  },
+                };
+                break;
+              }
+            }
+          }
+          if (swapFix) break;
+        }
+      }
+
       conflicts.push({
         id: `missing-${curr.classId}-${curr.subjectId}`,
         type: 'MISSING_CLASSES',
@@ -182,7 +226,7 @@ export async function detectConflicts(): Promise<Conflict[]> {
         teacherName: curr.Teacher?.name || undefined,
         description: `Turma ${cls?.name}: faltam ${needed} aula(s) de ${curr.Subject.name} (${placed}/${curr.classesPerWeek})`,
         affectedSlots: [],
-        autoFixable: foundSlot,
+        autoFixable: foundSlot || !!swapFix,
         suggestedFix: foundSlot ? {
           type: 'add_class',
           description: `Adicionar aula de ${curr.Subject.name} na ${['', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex'][suggestedDay]}ª ${suggestedPeriod}ª aula`,
@@ -193,7 +237,7 @@ export async function detectConflicts(): Promise<Conflict[]> {
             toDay: suggestedDay,
             toPeriod: suggestedPeriod,
           },
-        } : undefined,
+        } : swapFix,
       });
     }
   }
