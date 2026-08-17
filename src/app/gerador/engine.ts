@@ -913,12 +913,21 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
         filteredToSave.push(entry);
       }
     }
-    allToSave.length = 0;
-    allToSave.push(...filteredToSave);
 
-    if (allToSave.length > 0) {
+    // Deduplicate: keep only one entry per class+day+period
+    const dedupedToSave = [];
+    const seenSlots = new Set<string>();
+    for (const entry of filteredToSave) {
+      const key = entry.classId + '-' + entry.dayOfWeek + '-' + entry.period;
+      if (!seenSlots.has(key)) {
+        seenSlots.add(key);
+        dedupedToSave.push(entry);
+      }
+    }
+
+    if (dedupedToSave.length > 0) {
       await prisma.schedule.createMany({
-        data: allToSave,
+        data: dedupedToSave,
       });
     }
 
