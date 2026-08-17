@@ -674,6 +674,81 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
 
     const backtrackResult = runBacktracker(placeItems, toSchedule, config);
 
+    // ── LOOP DE PREENCHIMENTO DE AULAS FALTANTES ──────────────
+    // Após o backtracker, tenta preencher aulas que ficaram sem colocar
+    // Itera até não conseguir mais colocar nenhuma aula
+    const placedSet = new Set<string>();
+    for (const s of backtrackResult.placed) {
+      placedSet.add(s.classId + '-' + s.subjectId + '-' + s.dayOfWeek + '-' + s.period);
+    }
+
+    let fillIterations = 0;
+    let placedNew = true;
+    while (placedNew && fillIterations < 50) {
+      placedNew = false;
+      fillIterations++;
+
+      for (const item of toSchedule) {
+        // Verificar se este item já foi colocado
+        const alreadyPlaced = backtrackResult.placed.some(
+          p => p.classId === item.classId && p.subjectId === item.subjectId
+        );
+        if (alreadyPlaced) continue;
+
+        const cls = classMap.get(item.classId);
+        if (!cls) continue;
+        const maxP = getMaxPeriods(cls.level, 1, cls.shift, config);
+
+        // Tentar colocar em qualquer slot disponível
+        for (const day of [1, 2, 3, 4, 5]) {
+          for (let period = 1; period <= maxP; period++) {
+            if (occupied.has(item.classId + '-' + day + '-' + period)) continue;
+
+            // Verificar max aulas por dia
+            let countOnDay = 0;
+            for (const p of backtrackResult.placed) {
+              if (p.classId === item.classId && p.dayOfWeek === day) countOnDay++;
+            }
+            if (countOnDay >= maxP) continue;
+
+            // Verificar se professor está disponível
+            if (item.teacherId) {
+              if (teacherUnavail.has(item.teacherId + '-' + day + '-' + cls.shift + '-' + period)) continue;
+              if (teacherOccupied.has(item.teacherId + '-' + day + '-' + cls.shift + '-' + period)) continue;
+              // Verificar overlap de horário
+              const mySlot = slotLookup.get(cls.level + '-' + cls.shift + '-' + day + '-' + period);
+              if (mySlot) {
+                const tSlots = teacherDaySlots.get(item.teacherId)?.get(day);
+                if (tSlots) {
+                  let overlap = false;
+                  for (const ts of tSlots) {
+                    if (doTimeSlotsOverlap(mySlot, ts)) { overlap = true; break; }
+                  }
+                  if (overlap) continue;
+                }
+              }
+            }
+
+            // Colocar a aula
+            placeOnGrid(item.classId, item.subjectId, item.teacherId, day, period, cls.shift);
+            backtrackResult.placed.push({
+              classId: item.classId,
+              subjectId: item.subjectId,
+              teacherId: item.teacherId,
+              dayOfWeek: day,
+              period,
+              shift: cls.shift,
+              level: cls.level,
+            });
+            placedNew = true;
+            break;
+          }
+          if (placedNew) break;
+        }
+        if (placedNew) break;
+      }
+    }
+
     const countGaps = (periods: Set<number>, maxP: number): number => {
       const sorted = Array.from(periods).sort((a, b) => a - b);
       let gaps = 0;
