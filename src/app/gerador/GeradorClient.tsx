@@ -438,12 +438,10 @@ export default function GeradorClient({
       setSelectedTeacherId(slot.Teacher?.id || '');
       setSelectedSubjectId(slot.Subject.id);
     } else {
-      // Denormalize period for AFTERNOON: display 1-6 -> DB 7-12
-      const dbPeriod = classShift === 'AFTERNOON' ? displayPeriod + 6 : displayPeriod;
       setEditingSlot({
-        id: `new-${classId}-${day}-${dbPeriod}`,
+        id: `new-${classId}-${day}-${displayPeriod}`,
         dayOfWeek: day,
-        period: dbPeriod,
+        period: displayPeriod,
         isFixed: false,
         Class: { id: classId, name: classes.find(c => c.id === classId)?.name || '', level: classLevel, shift: classShift },
         Subject: { id: '', name: '' },
@@ -815,13 +813,11 @@ export default function GeradorClient({
 
         // Build lookup: "day-normalizedPeriod" -> schedule entry
         const validSchedules = classSchedules.filter(s => {
-          const normP = classShift === 'AFTERNOON' && s.period > 6 ? s.period - 6 : s.period;
-          return normP >= 1 && normP <= maxP;
+          return s.period >= 1 && s.period <= maxP;
         });
         const slotLookup = new Map<string, ScheduleEntry>();
         for (const s of validSchedules) {
-          const normPeriod = classShift === 'AFTERNOON' && s.period > 6 ? s.period - 6 : s.period;
-          slotLookup.set(s.dayOfWeek + '-' + normPeriod, s);
+          slotLookup.set(s.dayOfWeek + '-' + s.period, s);
         }
 
         return (
@@ -983,10 +979,7 @@ export default function GeradorClient({
           <>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>
               {editingSlot.id.startsWith('new-')
-                ? (() => {
-                    const normP = editingSlot.Class.shift === 'AFTERNOON' && editingSlot.period > 6 ? editingSlot.period - 6 : editingSlot.period;
-                    return `Adicionar aula na <strong>${editingSlot.Class.name}</strong>, ${days[editingSlot.dayOfWeek - 1]}, ${normP}ª aula.`;
-                  })()
+                ? `Adicionar aula na <strong>${editingSlot.Class.name}</strong>, ${days[editingSlot.dayOfWeek - 1]}, ${editingSlot.period}ª aula.`
                 : `Alterar a aula de <strong>${editingSlot.Subject.name}</strong> da turma <strong>${editingSlot.Class.name}</strong>.`}
             </p>
 
@@ -1841,7 +1834,7 @@ export default function GeradorClient({
                           <React.Fragment key={displayPeriod}>
                             <div style={{ padding: '0.4rem 0.6rem', backgroundColor: 'var(--bg-primary)', fontWeight: 500 }}>{displayPeriod}ª</div>
                             {[1, 2, 3, 4, 5].map(day => {
-                              const diff = classDiffs.find(d => d.dayOfWeek === day && (d.period === displayPeriod || d.period - 6 === displayPeriod));
+                              const diff = classDiffs.find(d => d.dayOfWeek === day && d.period === displayPeriod);
                               const bgColor = !diff ? 'white' :
                                 diff.status === 'kept' ? '#dcfce7' :
                                 diff.status === 'changed' ? '#fef9c3' :

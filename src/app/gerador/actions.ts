@@ -517,8 +517,6 @@ export async function restoreDefaultSchedule(templateId?: string, teacherNameMap
 
         // Create schedule entry
         const classObj = await prisma.class.findUnique({ where: { id: classId } });
-        const shift = classObj?.shift || 'MORNING';
-        const dbPeriod = shift === 'AFTERNOON' ? entry.period + 6 : entry.period;
 
         await prisma.schedule.create({
           data: {
@@ -526,7 +524,7 @@ export async function restoreDefaultSchedule(templateId?: string, teacherNameMap
             subjectId,
             teacherId,
             dayOfWeek: entry.dayOfWeek,
-            period: dbPeriod,
+            period: entry.period,
             isFixed,
           }
         });

@@ -15,12 +15,12 @@ export async function saveTeacherAvailability(teacherId: string, availabilities:
     where: { teacherId }
   });
 
-  // Save with shift and normalized period (1-6)
+  // Save with shift and period (1-6 for both shifts)
   const data = availabilities.map(a => ({
     teacherId,
     dayOfWeek: a.dayOfWeek,
-    shift: a.shift || (a.period > 6 ? 'AFTERNOON' : 'MORNING'),
-    period: a.period > 6 ? a.period - 6 : a.period,
+    shift: a.shift || 'MORNING',
+    period: a.period,
     isAvailable: a.isAvailable
   }));
 
@@ -41,20 +41,18 @@ export async function addCapelaRule(classIds: string[], dayOfWeek: number, perio
       capelaSubject = await prisma.subject.create({ data: { name: 'Capela' } });
     }
 
-    // Normalize: periods 7-12 → 1-6
-    const normalizedPeriod = period > 6 ? period - 6 : period;
-
+    // Periods are ALWAYS 1-6, no normalization needed
     const data = classIds.map(classId => ({
       classId,
       subjectId: capelaSubject!.id,
       teacherId,
       dayOfWeek,
-      period: normalizedPeriod,
+      period,
       isFixed: true
     }));
 
     await prisma.schedule.deleteMany({
-      where: { classId: { in: classIds }, dayOfWeek, period: normalizedPeriod }
+      where: { classId: { in: classIds }, dayOfWeek, period }
     });
 
     await prisma.schedule.createMany({ data });

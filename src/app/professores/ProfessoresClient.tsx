@@ -34,7 +34,7 @@ type TimeSlot = {
 
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 const morningPeriods = [1, 2, 3, 4, 5, 6];
-const afternoonPeriods = [7, 8, 9, 10, 11, 12];
+const afternoonPeriods = [1, 2, 3, 4, 5, 6];
 const allPeriods = [...morningPeriods, ...afternoonPeriods];
 
 function createDefaultGrid(): AvailabilitySlot[] {
@@ -98,10 +98,8 @@ export default function ProfessoresClient({
       const saved = await getTeacherAvailability(teacherId);
       const newGrid = createDefaultGrid();
       saved.forEach(s => {
-        // DB: period 1-6 + shift (MORNING/AFTERNOON)
-        // Grid: morning 1-6, afternoon 7-12
-        const gridPeriod = s.shift === 'AFTERNOON' ? s.period + 6 : s.period;
-        const idx = newGrid.findIndex(g => g.dayOfWeek === s.dayOfWeek && g.period === gridPeriod);
+        // DB: period 1-6 for both shifts
+        const idx = newGrid.findIndex(g => g.dayOfWeek === s.dayOfWeek && g.period === s.period);
         if (idx !== -1) newGrid[idx].isAvailable = s.isAvailable;
       });
       setGrid(newGrid);
@@ -174,11 +172,9 @@ export default function ProfessoresClient({
   /** Get time label for a period in the availability grid (uses selectedLevel and Monday as ref day) */
   const getAvailTime = (period: number, isMorning: boolean): string | null => {
     const shift = isMorning ? 'MORNING' : 'AFTERNOON';
-    // For morning: period is 1-6 directly. For afternoon: period 7-12 → DB period 1-6.
-    const dbPeriod = isMorning ? period : period - 6;
     const ts =
-      timeSlots.find(t => t.level === availLevel && t.shift === shift && t.period === dbPeriod && t.dayOfWeek === 1) ??
-      timeSlots.find(t => t.level === availLevel && t.shift === shift && t.period === dbPeriod);
+      timeSlots.find(t => t.level === availLevel && t.shift === shift && t.period === period && t.dayOfWeek === 1) ??
+      timeSlots.find(t => t.level === availLevel && t.shift === shift && t.period === period);
     return ts ? `${ts.startTime}–${ts.endTime}` : null;
   };
 
@@ -519,7 +515,7 @@ export default function ProfessoresClient({
                       return (
                         <tr key={period} style={{ borderBottom: '1px solid var(--border-color)' }}>
                           <td style={{ padding: '0.4rem', textAlign: 'left' }}>
-                            <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)' }}>{period - 6}ª</div>
+                            <div style={{ fontWeight: 'bold', color: 'var(--text-secondary)' }}>{period}ª</div>
                             {timeLabel && (
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', opacity: 0.7 }}>{timeLabel}</div>
                             )}

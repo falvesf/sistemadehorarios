@@ -383,19 +383,15 @@ export default function RestricoesClient({
 
   /**
    * Returns a human-readable time range for a chapel rule.
-   * Chapel rules store period 1-6 for morning, 7-12 for afternoon.
-   * TimeSlot DB uses period 1-6 per shift, differentiated by the shift field.
-   * We also filter by level so Fund II shows its own times.
+   * Periods are ALWAYS 1-6. Shift is determined by the class.
    */
   const getCapelaTime = (rule: Schedule): string | null => {
-    const isMorning = rule.period <= 6;
-    const shift = isMorning ? 'MORNING' : 'AFTERNOON';
-    const dbPeriod = isMorning ? rule.period : rule.period - 6;
+    const shift = rule.Class.shift;
     const level = rule.Class.level;
 
     const slot =
-      timeSlots.find(ts => ts.level === level && ts.shift === shift && ts.period === dbPeriod && ts.dayOfWeek === rule.dayOfWeek) ??
-      timeSlots.find(ts => ts.level === level && ts.shift === shift && ts.period === dbPeriod);
+      timeSlots.find(ts => ts.level === level && ts.shift === shift && ts.period === rule.period && ts.dayOfWeek === rule.dayOfWeek) ??
+      timeSlots.find(ts => ts.level === level && ts.shift === shift && ts.period === rule.period);
     return slot ? `${slot.startTime}–${slot.endTime}` : null;
   };
 

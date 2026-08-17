@@ -117,14 +117,14 @@ export async function detectConflicts(): Promise<Conflict[]> {
       const candidates: { day: number; period: number; gapScore: number }[] = [];
       
       for (let day = 1; day <= 5; day++) {
-        for (let normP = 1; normP <= 6; normP++) {
-          const denormP = shift === 'AFTERNOON' ? normP + 6 : normP;
-          if (occupiedSlots.has(`${day}-${denormP}`)) continue;
+        const maxP = (cls?.level === 'INFANTIL' || cls?.level === 'FUND1') ? 5 : 6;
+        for (let period = 1; period <= maxP; period++) {
+          if (occupiedSlots.has(`${day}-${period}`)) continue;
           
           // Check if teacher is available at this time
           let teacherOk = true;
           if (curr.teacherId) {
-            const unavailKey = curr.teacherId + '-' + day + '-' + normP;
+            const unavailKey = curr.teacherId + '-' + day + '-' + period;
             if (teacherUnavail.has(unavailKey)) teacherOk = false;
             
             // Check if teacher already teaches at this time (double-booked)
@@ -132,7 +132,7 @@ export async function detectConflicts(): Promise<Conflict[]> {
               const teacherConflict = schedules.find(s =>
                 s.teacherId === curr.teacherId &&
                 s.dayOfWeek === day &&
-                s.period === denormP
+                s.period === period
               );
               if (teacherConflict) teacherOk = false;
             }
@@ -148,20 +148,17 @@ export async function detectConflicts(): Promise<Conflict[]> {
           
           let gapScore = 0;
           if (existingPeriods.length > 0) {
-            // Prefer positions adjacent to existing classes (fills gaps)
             for (const ep of existingPeriods) {
-              if (Math.abs(denormP - ep) === 1) gapScore += 10;
+              if (Math.abs(period - ep) === 1) gapScore += 10;
             }
-            // Prefer positions between existing classes (closes gaps)
             const minP = Math.min(...existingPeriods);
             const maxP = Math.max(...existingPeriods);
-            if (denormP > minP && denormP < maxP) gapScore += 5;
+            if (period > minP && period < maxP) gapScore += 5;
           } else {
-            // No classes on this day yet - prefer period 1
-            if (normP === 1) gapScore += 3;
+            if (period === 1) gapScore += 3;
           }
           
-          candidates.push({ day, period: denormP, gapScore });
+          candidates.push({ day, period, gapScore });
         }
       }
       
