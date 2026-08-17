@@ -214,6 +214,37 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
       if (c) placeOnGrid(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
     }
 
+    // Para cada disciplina aliada (ex: Cultura Geral -> Capela),
+    // criar entradas equivalentes baseadas nas regras de Capela
+    for (const [sourceName, targetName] of aliasTargetByName) {
+      const targetSubject = await prisma.subject.findUnique({ where: { name: targetName } });
+      const sourceSubject = curriculums.find(c => c.Subject?.name.toLowerCase() === sourceName)?.Subject;
+      if (!targetSubject || !sourceSubject) continue;
+
+      // Para cada turma que tem Cultura Geral no currículo
+      const sourceCurriculums = curriculums.filter(c => c.subjectId === sourceSubject.id);
+      for (const curr of sourceCurriculums) {
+        // Verificar se já existe uma entrada fixa para esta turma+disciplina
+        const alreadyFixed = finalFixedSchedules.some(
+          s => s.classId === curr.classId && s.subjectId === sourceSubject.id
+        );
+        if (alreadyFixed) continue;
+
+        // Encontrar as entradas de Capela para esta turma
+        const capelaEntries = finalFixedSchedules.filter(
+          s => s.classId === curr.classId && s.subjectId === targetSubject.id
+        );
+
+        // Se a turma tem entradas de Capela, criar entradas equivalentes para Cultura Geral
+        for (const capela of capelaEntries) {
+          const c = classMap.get(capela.classId);
+          if (c) {
+            placeOnGrid(capela.classId, sourceSubject.id, capela.teacherId, capela.dayOfWeek, capela.period, c.shift);
+          }
+        }
+      }
+    }
+
     if (mode === 'REPAIR') {
       for (const s of currentSchedules) {
         const c = classMap.get(s.classId);
