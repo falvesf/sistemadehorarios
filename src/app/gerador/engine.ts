@@ -26,6 +26,12 @@ function getMaxPeriods(level: string, dayOfWeek: number, shift: string, config: 
 
 function sortItems(items: { classId: string; subjectId: string; teacherId: string | null; shift: string; level: string; consecutiveCount?: number }[], strategy: string) {
   const arr = [...items];
+  // Itens COM professor sempre primeiro (mais restritos)
+  const withTeacher = (a: typeof arr[0], b: typeof arr[0]) => {
+    if (a.teacherId && !b.teacherId) return -1;
+    if (!a.teacherId && b.teacherId) return 1;
+    return 0;
+  };
   switch (strategy) {
     case 'reverse':
       return arr.reverse();
@@ -36,19 +42,19 @@ function sortItems(items: { classId: string; subjectId: string; teacherId: strin
       for (const item of arr) {
         if (item.teacherId) teacherCounts.set(item.teacherId, (teacherCounts.get(item.teacherId) || 0) + 1);
       }
-      return arr.sort((a, b) => (teacherCounts.get(b.teacherId || '') || 0) - (teacherCounts.get(a.teacherId || '') || 0));
+      return arr.sort((a, b) => withTeacher(a, b) || (teacherCounts.get(b.teacherId || '') || 0) - (teacherCounts.get(a.teacherId || '') || 0));
     }
     case 'subject-first': {
       const subjectCounts = new Map<string, number>();
       for (const item of arr) subjectCounts.set(item.subjectId, (subjectCounts.get(item.subjectId) || 0) + 1);
-      return arr.sort((a, b) => (subjectCounts.get(b.subjectId) || 0) - (subjectCounts.get(a.subjectId) || 0));
+      return arr.sort((a, b) => withTeacher(a, b) || (subjectCounts.get(b.subjectId) || 0) - (subjectCounts.get(a.subjectId) || 0));
     }
     default: {
       const teacherLoads = new Map<string, number>();
       for (const item of arr) {
         if (item.teacherId) teacherLoads.set(item.teacherId, (teacherLoads.get(item.teacherId) || 0) + 1);
       }
-      return arr.sort((a, b) => (teacherLoads.get(b.teacherId || '') || 0) - (teacherLoads.get(a.teacherId || '') || 0));
+      return arr.sort((a, b) => withTeacher(a, b) || (teacherLoads.get(b.teacherId || '') || 0) - (teacherLoads.get(a.teacherId || '') || 0));
     }
   }
 }
