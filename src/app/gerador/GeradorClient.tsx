@@ -194,10 +194,10 @@ export default function GeradorClient({
       if (result.success) {
         showToast(result.message || 'Sucesso!', 'success');
       } else {
-        showToast('Erro ao gerar.', 'error');
+        showToast(`Erro ao gerar: ${result.error || 'desconhecido'}`, 'error');
       }
-    } catch {
-      showToast('Erro ao comunicar com o motor.', 'error');
+    } catch (e: any) {
+      showToast(`Erro ao comunicar com o motor: ${e?.message || e}`, 'error');
     } finally {
       setIsGenerating(false);
     }
@@ -214,10 +214,10 @@ export default function GeradorClient({
         showToast(result.message || 'Sucesso!', 'success');
         if (result.score) setLastScore(result.score);
       } else {
-        showToast('Erro ao gerar.', 'error');
+        showToast(`Erro ao gerar: ${result.error || 'desconhecido'}`, 'error');
       }
-    } catch {
-      showToast('Erro ao comunicar com o motor.', 'error');
+    } catch (e: any) {
+      showToast(`Erro ao comunicar com o motor: ${e?.message || e}`, 'error');
     } finally {
       setIsGenerating(false);
     }
