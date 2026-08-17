@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { generateSchedule, generateWithConfig, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule, importTemplateFromExcel, deleteTemplate, fetchConflicts, previewRecalculation, confirmRecalculation, fetchFixedSubjectConfigs, createFixedSubjectConfig, updateFixedSubjectConfig, deleteFixedSubjectConfig, autoFixConflict, autoFixAllConflicts, analyzeExcelForImport, applyImportWithMerges, backupAll, restoreAll } from './actions';
+import { generateSchedule, generateWithConfig, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule, importTemplateFromExcel, deleteTemplate, fetchConflicts, previewRecalculation, confirmRecalculation, fetchFixedSubjectConfigs, createFixedSubjectConfig, updateFixedSubjectConfig, deleteFixedSubjectConfig, autoFixConflict, autoFixAllConflicts, analyzeExcelForImport, applyImportWithMerges, backupAll, restoreAll, fixPeriodNormalization } from './actions';
 import { ScheduleConfig, DEFAULT_CONFIG, ScoreBreakdown } from './types';
 import { Conflict, ScheduleDiff, RecalculationProposal } from './conflict-detector';
 import { RecalculationChange } from './recalculator';
@@ -549,6 +549,13 @@ export default function GeradorClient({
     }
   };
 
+  const handleFixPeriods = async () => {
+    showToast('Corrigindo períodos...', 'info');
+    const result = await fixPeriodNormalization();
+    showToast(result.message, result.fixed > 0 ? 'success' : 'info');
+    router.refresh();
+  };
+
   const handleRestoreDefault = async () => {
     if (currentTemplates.length === 0) {
       showToast('Nenhum modelo cadastrado. Importe um modelo Excel primeiro.', 'error');
@@ -748,6 +755,9 @@ export default function GeradorClient({
               title={currentTemplates.length === 0 ? 'Nenhum modelo cadastrado. Importe um modelo Excel primeiro.' : 'Restaurar grade a partir do modelo selecionado'}
             >
               {isRestoring ? 'Restaurando...' : '🔄 Restaurar Padrão'}
+            </button>
+            <button className="btn btn-secondary" onClick={handleFixPeriods} title="Corrigir períodos > 6 no banco de dados">
+              🔧 Corrigir Períodos
             </button>
           </div>
         </div>

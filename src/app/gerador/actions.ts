@@ -1159,3 +1159,45 @@ export async function autoFixAllConflicts(): Promise<{
     return { fixed: 0, failed: 0, results: [], error: e.message };
   }
 }
+
+export async function fixPeriodNormalization(): Promise<{ fixed: number; message: string }> {
+  try {
+    // Fix schedules with period > 6 (should be 1-6)
+    const wrongSchedules = await prisma.schedule.findMany({
+      where: { period: { gt: 6 } }
+    });
+
+    for (const s of wrongSchedules) {
+      const normalizedPeriod = s.period - 6;
+      await prisma.schedule.update({
+        where: { id: s.id },
+        data: { period: normalizedPeriod }
+      });
+    }
+
+    // Fix availability with period > 6
+    const wrongAvail = await prisma.availability.findMany({
+      where: { period: { gt: 6 } }
+    });
+
+    for (const a of wrongAvail) {
+      const normalizedPeriod = a.period - 6;
+      await prisma.availability.update({
+        where: { id: a.id },
+        data: { period: normalizedPeriod }
+      });
+    }
+
+    const total = wrongSchedules.length + wrongAvail.length;
+    revalidatePath('/gerador');
+    revalidatePath('/restricoes');
+    revalidatePath('/professores');
+
+    return {
+      fixed: total,
+      message: `Corrigidos ${wrongSchedules.length} horários e ${wrongAvail.length} disponibilidades (períodos > 6 → normalizados para 1-6).`
+    };
+  } catch (e: any) {
+    return { fixed: 0, message: `Erro: ${e.message}` };
+  }
+}
