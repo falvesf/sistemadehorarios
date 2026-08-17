@@ -1167,12 +1167,31 @@ export async function fixPeriodNormalization(): Promise<{ fixed: number; message
       where: { period: { gt: 6 } }
     });
 
+    let fixedCount = 0;
     for (const s of wrongSchedules) {
       const normalizedPeriod = s.period - 6;
-      await prisma.schedule.update({
-        where: { id: s.id },
-        data: { period: normalizedPeriod }
+
+      // Check if a conflicting entry already exists
+      const conflict = await prisma.schedule.findFirst({
+        where: {
+          classId: s.classId,
+          dayOfWeek: s.dayOfWeek,
+          period: normalizedPeriod,
+          id: { not: s.id }
+        }
       });
+
+      if (conflict) {
+        // Delete the wrong-period entry (conflict already has the correct period)
+        await prisma.schedule.delete({ where: { id: s.id } });
+      } else {
+        // Safe to update
+        await prisma.schedule.update({
+          where: { id: s.id },
+          data: { period: normalizedPeriod }
+        });
+      }
+      fixedCount++;
     }
 
     // Fix availability with period > 6
@@ -1182,20 +1201,36 @@ export async function fixPeriodNormalization(): Promise<{ fixed: number; message
 
     for (const a of wrongAvail) {
       const normalizedPeriod = a.period - 6;
-      await prisma.availability.update({
-        where: { id: a.id },
-        data: { period: normalizedPeriod }
+
+      // Check if a conflicting entry already exists
+      const conflict = await prisma.availability.findFirst({
+        where: {
+          teacherId: a.teacherId,
+          dayOfWeek: a.dayOfWeek,
+          shift: a.shift,
+          period: normalizedPeriod,
+          id: { not: a.id }
+        }
       });
+
+      if (conflict) {
+        await prisma.availability.delete({ where: { id: a.id } });
+      } else {
+        await prisma.availability.update({
+          where: { id: a.id },
+          data: { period: normalizedPeriod }
+        });
+      }
+      fixedCount++;
     }
 
-    const total = wrongSchedules.length + wrongAvail.length;
     revalidatePath('/gerador');
     revalidatePath('/restricoes');
     revalidatePath('/professores');
 
     return {
-      fixed: total,
-      message: `Corrigidos ${wrongSchedules.length} horários e ${wrongAvail.length} disponibilidades (períodos > 6 → normalizados para 1-6).`
+      fixed: fixedCount,
+      message: `${fixedCount} registro(s) corrigido(s) (períodos > 6 → 1-6).`
     };
   } catch (e: any) {
     return { fixed: 0, message: `Erro: ${e.message}` };
