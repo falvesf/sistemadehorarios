@@ -533,9 +533,21 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
 
     const toSchedule: ToScheduleItem[] = [];
     for (const curr of curriculums) {
-      // Skip aliased subjects (e.g., "Cultura Geral" mapped to "Capela")
-      // These are already placed as fixed schedules and should not be redistributed
-      if (aliasedSubjectIds.has(curr.subjectId)) continue;
+      // Skip aliased subjects that ALSO have fixed schedules covering them
+      if (aliasedSubjectIds.has(curr.subjectId)) {
+        // Verificar se a disciplina alvo (Capela) já cobre esta turma
+        const targetSubjectName = aliasTargetByName.get(curr.Subject?.name.toLowerCase() || '');
+        if (targetSubjectName) {
+          const targetSubject = await prisma.subject.findUnique({ where: { name: targetSubjectName } });
+          if (targetSubject) {
+            const hasCoverage = finalFixedSchedules.some(
+              s => s.classId === curr.classId && s.subjectId === targetSubject.id
+            );
+            if (hasCoverage) continue; // Capela já cobre esta turma
+          }
+        }
+        // Se não tem cobertura, NÃO pular — colocar normalmente
+      }
 
       // Skip fixed-period subjects (e.g., "Bilingue" - same period every day)
       // These are already placed above
