@@ -33,7 +33,7 @@ export function runBacktracker(
   items: { classId: string; subjectId: string; teacherId: string | null; shift: string; level: string }[],
   config: ScheduleConfig
 ): BacktrackResult {
-  const maxAttempts = Math.max(config.advanced.maxAttempts, 500);
+  const maxAttempts = Math.max(config.advanced.maxAttempts, 200);
   let bestResult: BacktrackResult | null = null;
 
   const strategies: ('default' | 'reverse' | 'random' | 'teacher-first' | 'subject-first')[] = [
@@ -41,35 +41,31 @@ export function runBacktracker(
     'teacher-first',
     'subject-first',
     'reverse',
-    'random',
-    'random',
-    'random',
-    'random',
-    'random',
   ];
 
   const startTime = Date.now();
-  const timeoutMs = 110000; // 110 segundos (abaixo do timeout do Server Action de 120s)
+  const timeoutMs = 110000;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  // Ciclo 1: Estratégias fixas
+  for (let attempt = 0; attempt < strategies.length; attempt++) {
     if (Date.now() - startTime > timeoutMs) break;
-
-    let strategy: typeof strategies[number];
-    if (attempt < strategies.length) {
-      strategy = strategies[attempt];
-    } else {
-      strategy = 'random';
-    }
-
-    const result = placeFn(items, strategy);
+    const result = placeFn(items, strategies[attempt]);
     const score = calculateScore(result.placed, items.length, config);
-
     if (!bestResult || score.total > bestResult.score.total) {
       bestResult = { placed: result.placed, score };
     }
+    if (score.allocation >= 1 && score.gapMinimization >= 0.95) return bestResult;
+  }
 
-    // Para se alocação for 100% e gaps mínimos
-    if (score.allocation >= 1 && score.gapMinimization >= 0.95) break;
+  // Ciclo 2: Múltiplas tentativas aleatórias
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (Date.now() - startTime > timeoutMs) break;
+    const result = placeFn(items, 'random');
+    const score = calculateScore(result.placed, items.length, config);
+    if (!bestResult || score.total > bestResult.score.total) {
+      bestResult = { placed: result.placed, score };
+    }
+    if (score.allocation >= 1 && score.gapMinimization >= 0.95) return bestResult;
   }
 
   if (!bestResult) {
