@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '@/components/Toast';
 import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { generateSchedule, generateWithConfig, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule, importTemplateFromExcel, deleteTemplate, fetchConflicts, previewRecalculation, confirmRecalculation, fetchFixedSubjectConfigs, createFixedSubjectConfig, updateFixedSubjectConfig, deleteFixedSubjectConfig, autoFixConflict, autoFixAllConflicts, analyzeExcelForImport, applyImportWithMerges, backupAll, restoreAll, fixPeriodNormalization } from './actions';
+import { generateSchedule, generateWithConfig, updateSlotTeacher, createSlot, deleteSlot, exportSchedule, importSchedule, restoreDefaultSchedule, importTemplateFromExcel, deleteTemplate, fetchConflicts, previewRecalculation, confirmRecalculation, fetchFixedSubjectConfigs, createFixedSubjectConfig, updateFixedSubjectConfig, deleteFixedSubjectConfig, autoFixConflict, autoFixAllConflicts, analyzeExcelForImport, applyImportWithMerges, backupAll, restoreAll, fixPeriodNormalization, exportDiagnostic } from './actions';
 import { ScheduleConfig, DEFAULT_CONFIG, ScoreBreakdown } from './types';
 import { Conflict, ScheduleDiff, RecalculationProposal } from './conflict-detector';
 import { RecalculationChange } from './recalculator';
@@ -556,6 +556,22 @@ export default function GeradorClient({
     router.refresh();
   };
 
+  const handleExportDiagnostic = async () => {
+    try {
+      const json = await exportDiagnostic();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `diagnostico-chronogrid-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Diagnóstico exportado!', 'success');
+    } catch {
+      showToast('Erro ao exportar diagnóstico.', 'error');
+    }
+  };
+
   const handleRestoreDefault = async () => {
     if (currentTemplates.length === 0) {
       showToast('Nenhum modelo cadastrado. Importe um modelo Excel primeiro.', 'error');
@@ -758,6 +774,9 @@ export default function GeradorClient({
             </button>
             <button className="btn btn-secondary" onClick={handleFixPeriods} title="Corrigir períodos > 6 no banco de dados">
               🔧 Corrigir Períodos
+            </button>
+            <button className="btn btn-secondary" onClick={handleExportDiagnostic} title="Exportar diagnóstico da grade atual">
+              📊 Diagnóstico
             </button>
           </div>
         </div>

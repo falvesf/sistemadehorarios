@@ -1236,3 +1236,84 @@ export async function fixPeriodNormalization(): Promise<{ fixed: number; message
     return { fixed: 0, message: `Erro: ${e.message}` };
   }
 }
+
+export async function exportDiagnostic(): Promise<string> {
+  const classes = await prisma.class.findMany({ include: { Curriculum: { include: { Subject: true, Teacher: true } } } });
+  const schedules = await prisma.schedule.findMany({ include: { Class: true, Subject: true, Teacher: true } });
+  const curriculums = await prisma.curriculum.findMany({ include: { Class: true, Subject: true, Teacher: true } });
+  const teachers = await prisma.teacher.findMany();
+
+  const diagnostic: any = {
+    timestamp: new Date().toISOString(),
+    summary: {},
+    perClass: {},
+    teacherLoad: {},
+    unplacedItems: [],
+  };
+
+  // Sumário por turma
+  for (const cls of classes) {
+    const classSchedules = schedules.filter(s => s.classId === cls.id);
+    const classCurriculums = curriculums.filter(c => c.classId === cls.id);
+    const totalNeeded = classCurriculums.reduce((sum, c) => sum + c.classesPerWeek, 0);
+    const totalPlaced = classSchedules.length;
+    const gaps: { day: number; period: number }[] = [];
+
+    // Detectar gaps
+    const maxP = (cls.level === 'INFANTIL' || cls.level === 'FUND1') ? 5 : 6;
+    for (let day = 1; day <= 5; day++) {
+      const daySlots = classSchedules.filter(s => s.dayOfWeek === day).map(s => s.period).sort((a, b) => a - b);
+      for (let p = 1; p <= maxP; p++) {
+        if (!daySlots.includes(p)) gaps.push({ day, period: p });
+      }
+    }
+
+    diagnostic.perClass[cls.name] = {
+      level: cls.level,
+      shift: cls.shift,
+      placed: totalPlaced,
+      needed: totalNeeded,
+      gaps: gaps.length,
+      gapDetails: gaps.map(g => `${['', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex'][g.day]} ${g.period}ª`),
+    };
+
+    // Itens não colocados
+    for (const curr of classCurriculums) {
+      const placedCount = classSchedules.filter(s => s.subjectId === curr.subjectId).length;
+      const missing = curr.classesPerWeek - placedCount;
+      if (missing > 0) {
+        diagnostic.unplacedItems.push({
+          class: cls.name,
+          subject: curr.Subject.name,
+          teacher: curr.Teacher?.name || 'SEM PROFESSOR',
+          needed: curr.classesPerWeek,
+          placed: placedCount,
+          missing,
+        });
+      }
+    }
+  }
+
+  // Carga dos professores
+  for (const teacher of teachers) {
+    const teacherSchedules = schedules.filter(s => s.teacherId === teacher.id);
+    const byDay: Record<number, number> = {};
+    for (const s of teacherSchedules) {
+      byDay[s.dayOfWeek] = (byDay[s.dayOfWeek] || 0) + 1;
+    }
+    diagnostic.teacherLoad[teacher.name] = {
+      total: teacherSchedules.length,
+      byDay: { Seg: byDay[1] || 0, Ter: byDay[2] || 0, Qua: byDay[3] || 0, Qui: byDay[4] || 0, Sex: byDay[5] || 0 },
+      classes: [...new Set(teacherSchedules.map(s => s.Class.name))],
+    };
+  }
+
+  diagnostic.summary = {
+    totalClasses: classes.length,
+    totalSchedules: schedules.length,
+    totalUnplaced: diagnostic.unplacedItems.length,
+    totalGaps: Object.values(diagnostic.perClass).reduce((sum: number, c: any) => sum + c.gaps, 0),
+  };
+
+  return JSON.stringify(diagnostic, null, 2);
+}
