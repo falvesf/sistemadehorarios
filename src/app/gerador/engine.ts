@@ -770,6 +770,159 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
       }
     }
 
+    // ── RESOLUÇÃO POR TROCA (estilo Urânia) ──────────────────
+    // Para cada item não colocado, tenta trocar um horário existente
+    // da mesma turma para liberar o slot
+    let swapIterations = 0;
+    let swapMade = true;
+    while (swapMade && swapIterations < 20 && unplacedItems.length > 0) {
+      swapMade = false;
+      swapIterations++;
+
+      for (let i = unplacedItems.length - 1; i >= 0; i--) {
+        const item = unplacedItems[i];
+        const cls = classMap.get(item.classId);
+        if (!cls) { unplacedItems.splice(i, 1); continue; }
+        const maxP = getMaxPeriods(cls.level, 1, cls.shift, config);
+        let itemPlaced = false;
+
+        for (const targetDay of [1, 2, 3, 4, 5]) {
+          if (itemPlaced) break;
+          const targetDayCount = classDayCountPlaced.get(item.classId)?.get(targetDay) || 0;
+          if (targetDayCount >= maxP) continue;
+
+          for (let targetPeriod = 1; targetPeriod <= maxP; targetPeriod++) {
+            if (occupied.has(item.classId + '-' + targetDay + '-' + targetPeriod)) continue;
+
+            // Este slot está livre para a turma. Mas o professor pode estar ocupado.
+            // Verificar se o professor do item está livre
+            let teacherFree = true;
+            if (item.teacherId) {
+              if (teacherUnavail.has(item.teacherId + '-' + targetDay + '-' + cls.shift + '-' + targetPeriod)) teacherFree = false;
+              if (teacherOccupied.has(item.teacherId + '-' + targetDay + '-' + cls.shift + '-' + targetPeriod)) teacherFree = false;
+              if (teacherFree) {
+                const mySlot = slotLookup.get(cls.level + '-' + cls.shift + '-' + targetDay + '-' + targetPeriod);
+                if (mySlot) {
+                  const tSlots = teacherDaySlots.get(item.teacherId)?.get(targetDay);
+                  if (tSlots) {
+                    for (const ts of tSlots) {
+                      if (doTimeSlotsOverlap(mySlot, ts)) { teacherFree = false; break; }
+                    }
+                  }
+                }
+              }
+            }
+
+            if (!teacherFree) {
+              // Professor ocupado neste slot. Tentar TROCAR: mover quem está aqui para outro lugar
+              // Encontrar quem ocupa este slot do professor
+              const occupyingEntry = backtrackResult.placed.find(
+                p => p.teacherId === item.teacherId && p.dayOfWeek === targetDay && p.period === targetPeriod && p.shift === cls.shift
+              );
+              if (!occupyingEntry) continue;
+
+              // Tentar mover o occupyingEntry para outro slot livre
+              const occCls = classMap.get(occupyingEntry.classId);
+              if (!occCls) continue;
+              const occMaxP = getMaxPeriods(occCls.level, 1, occCls.shift, config);
+
+              for (const altDay of [1, 2, 3, 4, 5]) {
+                if (itemPlaced) break;
+                const altDayCount = classDayCountPlaced.get(occupyingEntry.classId)?.get(altDay) || 0;
+                if (altDayCount >= occMaxP) continue;
+
+                for (let altPeriod = 1; altPeriod <= occMaxP; altPeriod++) {
+                  if (altPeriod === targetPeriod && altDay === targetDay) continue;
+                  if (occupied.has(occupyingEntry.classId + '-' + altDay + '-' + altPeriod)) continue;
+
+                  // Verificar se o professor do occupyingEntry pode ir para o novo slot
+                  let occTeacherFree = true;
+                  if (occupyingEntry.teacherId) {
+                    if (teacherUnavail.has(occupyingEntry.teacherId + '-' + altDay + '-' + occCls.shift + '-' + altPeriod)) occTeacherFree = false;
+                    if (teacherOccupied.has(occupyingEntry.teacherId + '-' + altDay + '-' + occCls.shift + '-' + altPeriod)) occTeacherFree = false;
+                    if (occTeacherFree) {
+                      const occSlot = slotLookup.get(occCls.level + '-' + occCls.shift + '-' + altDay + '-' + altPeriod);
+                      if (occSlot) {
+                        const occTSlots = teacherDaySlots.get(occupyingEntry.teacherId)?.get(altDay);
+                        if (occTSlots) {
+                          for (const ts of occTSlots) {
+                            if (doTimeSlotsOverlap(occSlot, ts)) { occTeacherFree = false; break; }
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  if (!occTeacherFree) continue;
+
+                  // TROCA: mover occupyingEntry para altDay/altPeriod, colocar item em targetDay/targetPeriod
+                  // Remover occupyingEntry da posição antiga
+                  occupied.delete(occupyingEntry.classId + '-' + targetDay + '-' + targetPeriod);
+                  if (occupyingEntry.teacherId) {
+                    teacherOccupied.delete(occupyingEntry.teacherId + '-' + targetDay + '-' + occCls.shift + '-' + targetPeriod);
+                  }
+
+                  // Colocar item na posição liberada
+                  placeOnGrid(item.classId, item.subjectId, item.teacherId, targetDay, targetPeriod, cls.shift);
+                  backtrackResult.placed.push({
+                    classId: item.classId,
+                    subjectId: item.subjectId,
+                    teacherId: item.teacherId,
+                    dayOfWeek: targetDay,
+                    period: targetPeriod,
+                    shift: cls.shift,
+                    level: cls.level,
+                  });
+
+                  // Mover occupyingEntry para nova posição
+                  occupied.delete(occupyingEntry.classId + '-' + altDay + '-' + altPeriod);
+                  placeOnGrid(occupyingEntry.classId, occupyingEntry.subjectId, occupyingEntry.teacherId, altDay, altPeriod, occCls.shift);
+
+                  // Atualizar o placed do occupyingEntry
+                  const occIdx = backtrackResult.placed.indexOf(occupyingEntry);
+                  if (occIdx >= 0) {
+                    backtrackResult.placed[occIdx] = { ...occupyingEntry, dayOfWeek: altDay, period: altPeriod };
+                  }
+
+                  // Atualizar contadores
+                  const oldDm = classDayCountPlaced.get(occupyingEntry.classId);
+                  if (oldDm) {
+                    const oldCount = oldDm.get(targetDay) || 0;
+                    oldDm.set(targetDay, Math.max(0, oldCount - 1));
+                    oldDm.set(altDay, (oldDm.get(altDay) || 0) + 1);
+                  }
+                  classDayCountPlaced.get(item.classId)!.set(targetDay, (classDayCountPlaced.get(item.classId)?.get(targetDay) || 0) + 1);
+
+                  unplacedItems.splice(i, 1);
+                  placedNew = true;
+                  swapMade = true;
+                  itemPlaced = true;
+                  break;
+                }
+              }
+            } else {
+              // Professor livre, colocar direto
+              placeOnGrid(item.classId, item.subjectId, item.teacherId, targetDay, targetPeriod, cls.shift);
+              backtrackResult.placed.push({
+                classId: item.classId,
+                subjectId: item.subjectId,
+                teacherId: item.teacherId,
+                dayOfWeek: targetDay,
+                period: targetPeriod,
+                shift: cls.shift,
+                level: cls.level,
+              });
+              classDayCountPlaced.get(item.classId)!.set(targetDay, (classDayCountPlaced.get(item.classId)?.get(targetDay) || 0) + 1);
+              unplacedItems.splice(i, 1);
+              placedNew = true;
+              itemPlaced = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const countGaps = (periods: Set<number>, maxP: number): number => {
       const sorted = Array.from(periods).sort((a, b) => a - b);
       let gaps = 0;
