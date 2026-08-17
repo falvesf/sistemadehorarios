@@ -674,6 +674,25 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
 
     const backtrackResult = runBacktracker(placeItems, toSchedule, config);
 
+    // ── SINCRONIZAR ESTADO GLOBAL COM RESULTADO DO BACKTRACKER ──
+    // O backtracker usa placeOnGridLocal (cópias locais), mas o fill loop
+    // precisa do estado global atualizado
+    for (const slot of backtrackResult.placed) {
+      occupied.add(slot.classId + '-' + slot.dayOfWeek + '-' + slot.period);
+      if (slot.teacherId) {
+        const cls = classMap.get(slot.classId);
+        const shift = cls?.shift || slot.shift;
+        teacherOccupied.add(slot.teacherId + '-' + slot.dayOfWeek + '-' + shift + '-' + slot.period);
+        if (!teacherDaySlots.has(slot.teacherId)) teacherDaySlots.set(slot.teacherId, new Map());
+        const dm = teacherDaySlots.get(slot.teacherId)!;
+        if (!dm.has(slot.dayOfWeek)) dm.set(slot.dayOfWeek, []);
+        const mySlot = slotLookup.get(slot.level + '-' + shift + '-' + slot.dayOfWeek + '-' + slot.period);
+        if (mySlot && !dm.get(slot.dayOfWeek)!.some(s => s.startTime === mySlot.startTime && s.endTime === mySlot.endTime)) {
+          dm.get(slot.dayOfWeek)!.push(mySlot);
+        }
+      }
+    }
+
     // ── LOOP DE PREENCHIMENTO DE AULAS FALTANTES ──────────────
     const classDayCountPlaced = new Map<string, Map<number, number>>();
     for (const s of backtrackResult.placed) {
