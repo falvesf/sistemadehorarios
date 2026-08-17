@@ -676,46 +676,50 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
 
     // ── LOOP DE PREENCHIMENTO DE AULAS FALTANTES ──────────────
     // Após o backtracker, tenta preencher aulas que ficaram sem colocar
-    // Itera até não conseguir mais colocar nenhuma aula
-    const placedSet = new Set<string>();
+    const placedKeys = new Set<string>();
     for (const s of backtrackResult.placed) {
-      placedSet.add(s.classId + '-' + s.subjectId + '-' + s.dayOfWeek + '-' + s.period);
+      placedKeys.add(s.classId + '-' + s.subjectId + '-' + s.dayOfWeek + '-' + s.period);
     }
+
+    // Contar aulas por turma/dia (pré-computado)
+    const classDayCountPlaced = new Map<string, Map<number, number>>();
+    for (const s of backtrackResult.placed) {
+      if (!classDayCountPlaced.has(s.classId)) classDayCountPlaced.set(s.classId, new Map());
+      const dm = classDayCountPlaced.get(s.classId)!;
+      dm.set(s.dayOfWeek, (dm.get(s.dayOfWeek) || 0) + 1);
+    }
+
+    // Itens não colocados
+    const unplacedItems = toSchedule.filter(item => {
+      return !backtrackResult.placed.some(
+        p => p.classId === item.classId && p.subjectId === item.subjectId
+      );
+    });
 
     let fillIterations = 0;
     let placedNew = true;
-    while (placedNew && fillIterations < 50) {
+    while (placedNew && fillIterations < 10 && unplacedItems.length > 0) {
       placedNew = false;
       fillIterations++;
 
-      for (const item of toSchedule) {
-        // Verificar se este item já foi colocado
-        const alreadyPlaced = backtrackResult.placed.some(
-          p => p.classId === item.classId && p.subjectId === item.subjectId
-        );
-        if (alreadyPlaced) continue;
-
+      for (let i = unplacedItems.length - 1; i >= 0; i--) {
+        const item = unplacedItems[i];
         const cls = classMap.get(item.classId);
-        if (!cls) continue;
+        if (!cls) { unplacedItems.splice(i, 1); continue; }
         const maxP = getMaxPeriods(cls.level, 1, cls.shift, config);
 
-        // Tentar colocar em qualquer slot disponível
+        let itemPlaced = false;
+
         for (const day of [1, 2, 3, 4, 5]) {
+          if (itemPlaced) break;
+          const dayCount = classDayCountPlaced.get(item.classId)?.get(day) || 0;
+          if (dayCount >= maxP) continue;
+
           for (let period = 1; period <= maxP; period++) {
             if (occupied.has(item.classId + '-' + day + '-' + period)) continue;
-
-            // Verificar max aulas por dia
-            let countOnDay = 0;
-            for (const p of backtrackResult.placed) {
-              if (p.classId === item.classId && p.dayOfWeek === day) countOnDay++;
-            }
-            if (countOnDay >= maxP) continue;
-
-            // Verificar se professor está disponível
             if (item.teacherId) {
               if (teacherUnavail.has(item.teacherId + '-' + day + '-' + cls.shift + '-' + period)) continue;
               if (teacherOccupied.has(item.teacherId + '-' + day + '-' + cls.shift + '-' + period)) continue;
-              // Verificar overlap de horário
               const mySlot = slotLookup.get(cls.level + '-' + cls.shift + '-' + day + '-' + period);
               if (mySlot) {
                 const tSlots = teacherDaySlots.get(item.teacherId)?.get(day);
@@ -740,12 +744,16 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
               shift: cls.shift,
               level: cls.level,
             });
+            // Atualizar contadores
+            if (!classDayCountPlaced.has(item.classId)) classDayCountPlaced.set(item.classId, new Map());
+            const dm = classDayCountPlaced.get(item.classId)!;
+            dm.set(day, (dm.get(day) || 0) + 1);
+            unplacedItems.splice(i, 1);
             placedNew = true;
+            itemPlaced = true;
             break;
           }
-          if (placedNew) break;
         }
-        if (placedNew) break;
       }
     }
 
