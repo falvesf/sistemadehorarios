@@ -33,7 +33,7 @@ export function runBacktracker(
   items: { classId: string; subjectId: string; teacherId: string | null; shift: string; level: string }[],
   config: ScheduleConfig
 ): BacktrackResult {
-  const maxAttempts = Math.max(config.advanced.maxAttempts, 200);
+  const maxAttempts = Math.max(config.advanced.maxAttempts, 100);
   let bestResult: BacktrackResult | null = null;
 
   const strategies: ('default' | 'reverse' | 'random' | 'teacher-first' | 'subject-first')[] = [
@@ -44,7 +44,7 @@ export function runBacktracker(
   ];
 
   const startTime = Date.now();
-  const timeoutMs = 120000; // 2 minutos para processamento exaustivo
+  const timeoutMs = 45000; // 45 segundos (abaixo do timeout do Server Action)
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() - startTime > timeoutMs) break;

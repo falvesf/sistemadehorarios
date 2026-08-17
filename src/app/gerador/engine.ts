@@ -675,13 +675,6 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
     const backtrackResult = runBacktracker(placeItems, toSchedule, config);
 
     // ── LOOP DE PREENCHIMENTO DE AULAS FALTANTES ──────────────
-    // Após o backtracker, tenta preencher aulas que ficaram sem colocar
-    const placedKeys = new Set<string>();
-    for (const s of backtrackResult.placed) {
-      placedKeys.add(s.classId + '-' + s.subjectId + '-' + s.dayOfWeek + '-' + s.period);
-    }
-
-    // Contar aulas por turma/dia (pré-computado)
     const classDayCountPlaced = new Map<string, Map<number, number>>();
     for (const s of backtrackResult.placed) {
       if (!classDayCountPlaced.has(s.classId)) classDayCountPlaced.set(s.classId, new Map());
@@ -689,12 +682,10 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
       dm.set(s.dayOfWeek, (dm.get(s.dayOfWeek) || 0) + 1);
     }
 
-    // Itens não colocados
-    const unplacedItems = toSchedule.filter(item => {
-      return !backtrackResult.placed.some(
-        p => p.classId === item.classId && p.subjectId === item.subjectId
-      );
-    });
+    // Itens não colocados (pré-computado com Set para O(1))
+    const placedClassSubject = new Set<string>();
+    for (const s of backtrackResult.placed) placedClassSubject.add(s.classId + '-' + s.subjectId);
+    const unplacedItems = toSchedule.filter(item => !placedClassSubject.has(item.classId + '-' + item.subjectId));
 
     let fillIterations = 0;
     let placedNew = true;
@@ -708,10 +699,7 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
         if (!cls) { unplacedItems.splice(i, 1); continue; }
         const maxP = getMaxPeriods(cls.level, 1, cls.shift, config);
 
-        let itemPlaced = false;
-
         for (const day of [1, 2, 3, 4, 5]) {
-          if (itemPlaced) break;
           const dayCount = classDayCountPlaced.get(item.classId)?.get(day) || 0;
           if (dayCount >= maxP) continue;
 
@@ -733,7 +721,6 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
               }
             }
 
-            // Colocar a aula
             placeOnGrid(item.classId, item.subjectId, item.teacherId, day, period, cls.shift);
             backtrackResult.placed.push({
               classId: item.classId,
@@ -744,16 +731,16 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
               shift: cls.shift,
               level: cls.level,
             });
-            // Atualizar contadores
             if (!classDayCountPlaced.has(item.classId)) classDayCountPlaced.set(item.classId, new Map());
             const dm = classDayCountPlaced.get(item.classId)!;
             dm.set(day, (dm.get(day) || 0) + 1);
             unplacedItems.splice(i, 1);
             placedNew = true;
-            itemPlaced = true;
             break;
           }
+          if (placedNew) break;
         }
+        if (placedNew) break;
       }
     }
 
