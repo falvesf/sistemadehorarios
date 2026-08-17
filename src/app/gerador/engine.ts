@@ -214,37 +214,6 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
       if (c) placeOnGrid(s.classId, s.subjectId, s.teacherId, s.dayOfWeek, s.period, c.shift);
     }
 
-    // Para cada disciplina aliada (ex: Cultura Geral -> Capela),
-    // criar entradas equivalentes baseadas nas regras de Capela
-    for (const [sourceName, targetName] of aliasTargetByName) {
-      const targetSubject = await prisma.subject.findUnique({ where: { name: targetName } });
-      const sourceSubject = curriculums.find(c => c.Subject?.name.toLowerCase() === sourceName)?.Subject;
-      if (!targetSubject || !sourceSubject) continue;
-
-      // Para cada turma que tem Cultura Geral no currículo
-      const sourceCurriculums = curriculums.filter(c => c.subjectId === sourceSubject.id);
-      for (const curr of sourceCurriculums) {
-        // Verificar se já existe uma entrada fixa para esta turma+disciplina
-        const alreadyFixed = finalFixedSchedules.some(
-          s => s.classId === curr.classId && s.subjectId === sourceSubject.id
-        );
-        if (alreadyFixed) continue;
-
-        // Encontrar as entradas de Capela para esta turma
-        const capelaEntries = finalFixedSchedules.filter(
-          s => s.classId === curr.classId && s.subjectId === targetSubject.id
-        );
-
-        // Se a turma tem entradas de Capela, criar entradas equivalentes para Cultura Geral
-        for (const capela of capelaEntries) {
-          const c = classMap.get(capela.classId);
-          if (c) {
-            placeOnGrid(capela.classId, sourceSubject.id, capela.teacherId, capela.dayOfWeek, capela.period, c.shift);
-          }
-        }
-      }
-    }
-
     if (mode === 'REPAIR') {
       for (const s of currentSchedules) {
         const c = classMap.get(s.classId);
@@ -963,6 +932,56 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
             }
           }
         }
+      }
+    }
+
+    // ── CULTURA GERAL MULTI-TURMA ─────────────────────────────
+    for (const [sourceName] of aliasTargetByName) {
+      const sourceSubject = curriculums.find(c => c.Subject?.name.toLowerCase() === sourceName)?.Subject;
+      if (!sourceSubject) continue;
+      const sourceCurriculums = curriculums.filter(c => c.subjectId === sourceSubject.id);
+      if (sourceCurriculums.length === 0) continue;
+      const byTeacher = new Map<string, typeof sourceCurriculums>();
+      for (const curr of sourceCurriculums) {
+        const tid = curr.teacherId || 'none';
+        if (!byTeacher.has(tid)) byTeacher.set(tid, []);
+        byTeacher.get(tid)!.push(curr);
+      }
+      for (const [tid, tCurrs] of byTeacher) {
+        if (tid === 'none') continue;
+        const need = tCurrs.filter(curr => !backtrackResult.placed.some(p => p.classId === curr.classId && p.subjectId === curr.subjectId) && !fixedClassSubjectPairs.has(curr.classId + '-' + curr.subjectId));
+        if (need.length === 0) continue;
+        for (const day of [1, 2, 3, 4, 5]) {
+          for (let period = 1; period <= 5; period++) {
+            if (teacherUnavail.has(tid + '-' + day + '-' + 'MORNING' + '-' + period)) continue;
+            if (teacherOccupied.has(tid + '-' + day + '-' + 'MORNING' + '-' + period)) continue;
+            let allFree = true;
+            for (const curr of need) {
+              const cls = classMap.get(curr.classId);
+              if (!cls) { allFree = false; break; }
+              if (occupied.has(curr.classId + '-' + day + '-' + period)) { allFree = false; break; }
+              if ((backtrackResult.placed.filter(p => p.classId === curr.classId && p.dayOfWeek === day).length) >= 5) { allFree = false; break; }
+            }
+            if (!allFree) continue;
+            for (const curr of need) {
+              const cls = classMap.get(curr.classId);
+              if (!cls) continue;
+              placeOnGrid(curr.classId, curr.subjectId, tid, day, period, cls.shift);
+              backtrackResult.placed.push({ classId: curr.classId, subjectId: curr.subjectId, teacherId: tid, dayOfWeek: day, period, shift: cls.shift, level: cls.level });
+              if (!classDayCountPlaced.has(curr.classId)) classDayCountPlaced.set(curr.classId, new Map());
+              classDayCountPlaced.get(curr.classId)!.set(day, (classDayCountPlaced.get(curr.classId)?.get(day) || 0) + 1);
+            }
+            need.length = 0;
+            break;
+          }
+          if (need.length === 0) break;
+        }
+      }
+    }
+
+    for (let i = unplacedItems.length - 1; i >= 0; i--) {
+      if (backtrackResult.placed.some(p => p.classId === unplacedItems[i].classId && p.subjectId === unplacedItems[i].subjectId)) {
+        unplacedItems.splice(i, 1);
       }
     }
 
