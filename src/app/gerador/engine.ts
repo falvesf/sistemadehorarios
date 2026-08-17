@@ -701,14 +701,13 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
       dm.set(s.dayOfWeek, (dm.get(s.dayOfWeek) || 0) + 1);
     }
 
-    // Itens não colocados (pré-computado com Set para O(1))
     const placedClassSubject = new Set<string>();
     for (const s of backtrackResult.placed) placedClassSubject.add(s.classId + '-' + s.subjectId);
     const unplacedItems = toSchedule.filter(item => !placedClassSubject.has(item.classId + '-' + item.subjectId));
 
     let fillIterations = 0;
     let placedNew = true;
-    while (placedNew && fillIterations < 10 && unplacedItems.length > 0) {
+    while (placedNew && fillIterations < 20 && unplacedItems.length > 0) {
       placedNew = false;
       fillIterations++;
 
@@ -718,7 +717,10 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
         if (!cls) { unplacedItems.splice(i, 1); continue; }
         const maxP = getMaxPeriods(cls.level, 1, cls.shift, config);
 
+        let itemPlaced = false;
+
         for (const day of [1, 2, 3, 4, 5]) {
+          if (itemPlaced) break;
           const dayCount = classDayCountPlaced.get(item.classId)?.get(day) || 0;
           if (dayCount >= maxP) continue;
 
@@ -755,11 +757,10 @@ export async function runGenerator(mode: 'REPAIR' | 'SCRATCH', config: ScheduleC
             dm.set(day, (dm.get(day) || 0) + 1);
             unplacedItems.splice(i, 1);
             placedNew = true;
+            itemPlaced = true;
             break;
           }
-          if (placedNew) break;
         }
-        if (placedNew) break;
       }
     }
 
